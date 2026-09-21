@@ -24,6 +24,7 @@ internal static class TestRunner
         Run("只显示今日", TestOnlyToday);
         Run("超过五条折叠", TestCollapse);
         Run("04:00 边界", TestDayBoundary);
+        Run("待办新建、编辑、完成、删除撤销和星标", TestTodoOperations);
         Run("布局翻转、找回、贴边和透明度", TestLayoutRules);
         Run("原子写入中强杀不损坏主文件", TestCrashDuringWrite);
         Run("自动备份只保留最近七份", TestBackupRetention);
@@ -111,6 +112,38 @@ internal static class TestRunner
         Equal(LayoutRules.MinimumOpacity, LayoutRules.ClampOpacity(0.01));
         False(LayoutRules.IsDrag(new Point(10, 10), new Point(13, 14), 5));
         True(LayoutRules.IsDrag(new Point(10, 10), new Point(16, 10), 5));
+    }
+
+    private static void TestTodoOperations()
+    {
+        string root = NewTestDirectory();
+        string path = Path.Combine(root, "data.json");
+        TodoService service = new TodoService(new TodoRepository(path));
+        TodoItem created = service.Create("  示例任务  ", null, null, null, false);
+        Equal("示例任务", created.Title);
+        True(string.IsNullOrEmpty(created.DueDate));
+
+        service.Update(created.Id, "修改后", "虚构备注", "2026-09-22", "15:30", true);
+        Equal("修改后", service.Find(created.Id).Title);
+        True(service.Find(created.Id).IsStarred);
+
+        True(service.ToggleCompleted(created.Id));
+        False(service.ToggleCompleted(created.Id));
+        False(service.ToggleStarred(created.Id));
+        service.Delete(created.Id);
+        True(service.Find(created.Id).IsDeleted);
+        service.UndoDelete(created.Id);
+        False(service.Find(created.Id).IsDeleted);
+
+        RoostData reloaded = new TodoRepository(path).Load();
+        Equal(1, reloaded.Todos.Count);
+        Equal("修改后", reloaded.Todos[0].Title);
+        False(reloaded.Todos[0].IsDeleted);
+
+        bool rejected = false;
+        try { service.Create("   ", null, null, null, false); }
+        catch (ArgumentException) { rejected = true; }
+        True(rejected);
     }
 
     private static void TestCrashDuringWrite()
@@ -212,4 +245,3 @@ internal static class TestRunner
             throw new Exception(string.Format("expected {0}, actual {1}", expected, actual));
     }
 }
-
