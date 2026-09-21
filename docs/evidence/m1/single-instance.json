@@ -1,0 +1,9 @@
+{
+  "test": "single-instance",
+  "timestampUtc": "2026-09-21T09:02:20.7635263Z",
+  "secondExitCode": 0,
+  "firstStillRunning": true,
+  "existingInstanceReceivedShowMessage": true,
+  "overallPass": true,
+  "status": "PASS"
+}

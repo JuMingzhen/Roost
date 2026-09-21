@@ -105,7 +105,7 @@ namespace Roost.Core
             AtomicFile.WriteAllBytes(dataPath, bytes, null);
             Directory.CreateDirectory(backupDirectory);
             string stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fffffff");
-            string backup = Path.Combine(backupDirectory, "data-" + stamp + ".json");
+            string backup = Path.Combine(backupDirectory, "data-" + stamp + "-" + Guid.NewGuid().ToString("N") + ".json");
             AtomicFile.WriteAllBytes(backup, bytes, null);
             PruneBackups(7);
         }
@@ -173,4 +173,3 @@ namespace Roost.Core
         }
     }
 }
-

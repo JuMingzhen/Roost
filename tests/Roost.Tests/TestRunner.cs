@@ -26,6 +26,7 @@ internal static class TestRunner
         Run("04:00 边界", TestDayBoundary);
         Run("待办新建、编辑、完成、删除撤销和星标", TestTodoOperations);
         Run("布局翻转、找回、贴边和透明度", TestLayoutRules);
+        Run("位置与清单设置重启后保持", TestSettingsPersistence);
         Run("全屏窗口判定", TestFullscreenRules);
         Run("原子写入中强杀不损坏主文件", TestCrashDuringWrite);
         Run("自动备份只保留最近七份", TestBackupRetention);
@@ -155,6 +156,25 @@ internal static class TestRunner
         False(FullscreenRules.IsFullscreen(new Rectangle(0, 0, 1910, 1080), monitor, true, false));
         False(FullscreenRules.IsFullscreen(monitor, monitor, false, false));
         False(FullscreenRules.IsFullscreen(monitor, monitor, true, true));
+    }
+
+    private static void TestSettingsPersistence()
+    {
+        string root = NewTestDirectory();
+        string path = Path.Combine(root, "data.json");
+        TodoService service = new TodoService(new TodoRepository(path));
+        service.Data.Settings.HasSavedPosition = true;
+        service.Data.Settings.PetX = 777;
+        service.Data.Settings.PetY = 333;
+        service.Data.Settings.OnlyToday = true;
+        service.Data.Settings.ListVisible = false;
+        service.SaveSettings();
+        RoostData reloaded = new TodoRepository(path).Load();
+        True(reloaded.Settings.HasSavedPosition);
+        Equal(777, reloaded.Settings.PetX);
+        Equal(333, reloaded.Settings.PetY);
+        True(reloaded.Settings.OnlyToday);
+        False(reloaded.Settings.ListVisible);
     }
 
     private static void TestCrashDuringWrite()

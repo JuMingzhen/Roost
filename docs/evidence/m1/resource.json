@@ -1,0 +1,1 @@
+{"test":"cpu","timestampUtc":"2026-09-21T08:59:41.5864325Z","osVersion":"Microsoft Windows NT 6.2.9200.0","logicalProcessors":16,"visibleDurationSeconds":600.0006831,"hiddenDurationSeconds":30.021016,"visibleAverageCpuPercent":0.1701,"averageWorkingSetMb":54.06,"maximumWorkingSetMb":55.17,"framesWhileVisible":4792,"framesWhileHidden":0,"overallPass":true,"status":"PASS"}

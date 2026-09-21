@@ -177,7 +177,7 @@ namespace Roost.App
             if (value == PetState.Reminder) return new Point(step % 2 == 0 ? -1 : 1, 0);
             if (value == PetState.Thinking) return new Point(0, step < 4 ? -1 : 0);
             if (value == PetState.Hover) return new Point(step < 4 ? 0 : 1, 0);
-            if (value == PetState.Idle) return new Point(0, step == 3 || step == 4 ? -1 : 0);
+            if (value == PetState.Idle || value == PetState.Drag) return new Point(0, step == 3 || step == 4 ? -1 : 0);
             return Point.Empty;
         }
     }

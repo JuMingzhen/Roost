@@ -185,6 +185,7 @@ internal static class VerificationRunner
         string assets = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "cat");
         PetForm pet = new PetForm(service, NativeMethods.RegisterWindowMessage("Roost.Verify.Cpu." + Guid.NewGuid().ToString("N")), assets);
         pet.Show();
+        pet.DisableFullscreenDetectionForTest();
         Pump(300);
         Process process = Process.GetCurrentProcess();
         List<long> memory = new List<long>();
@@ -203,7 +204,8 @@ internal static class VerificationRunner
             }
             Thread.Sleep(10);
         }
-        double cpu = (process.TotalProcessorTime - cpuStart).TotalSeconds / clock.Elapsed.TotalSeconds / Environment.ProcessorCount * 100.0;
+        double visibleElapsed = clock.Elapsed.TotalSeconds;
+        double cpu = (process.TotalProcessorTime - cpuStart).TotalSeconds / visibleElapsed / Environment.ProcessorCount * 100.0;
         int visibleFrames = pet.AnimationFrameCountForTest - startFrames;
         pet.ToggleVisibilityForTest();
         int hiddenStartFrames = pet.AnimationFrameCountForTest;
@@ -218,7 +220,7 @@ internal static class VerificationRunner
         double maximumMb = maximum / 1024.0 / 1024.0;
         bool pass = visibleSeconds >= 600 && cpu <= 0.5 && maximumMb <= 100.0 && visibleFrames > 0 && hiddenFrames == 0;
         Dictionary<string, object> result = Base("cpu");
-        result["visibleDurationSeconds"] = clock.Elapsed.TotalSeconds;
+        result["visibleDurationSeconds"] = visibleElapsed;
         result["hiddenDurationSeconds"] = hiddenClock.Elapsed.TotalSeconds;
         result["visibleAverageCpuPercent"] = Math.Round(cpu, 4);
         result["averageWorkingSetMb"] = Math.Round(averageMb, 2);

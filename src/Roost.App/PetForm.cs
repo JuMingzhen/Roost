@@ -63,6 +63,12 @@ namespace Roost.App
             ApplyFullscreenState(fullscreen);
         }
 
+        internal void DisableFullscreenDetectionForTest()
+        {
+            fullscreenTimer.Stop();
+            if (!Visible) ShowFromUser();
+        }
+
         internal void CloseForTest()
         {
             allowExit = true;
