@@ -36,7 +36,19 @@
 
 ## 构建与运行
 
-开发与测试都在 Windows 本机进行。技术选型完成后，在这里补充构建、运行、测试的命令。
+开发与测试都在 Windows 本机进行，使用系统自带的 .NET Framework 4.8 编译器，不要求安装额外 SDK。
+
+- 构建：`.\build.ps1`，输出到 `dist\`。
+- 运行：`.\run.ps1`。
+- 核心规则、待办操作、数据安全与备份：`.\test.ps1`。
+- Windows PowerShell 5.1 脚本编码与语法：`.\verify-powershell.ps1`（也会由 `test.ps1` 自动执行）。
+- 桌面系统集成与单实例：`.\verify-system.ps1`。
+- 像素颜色与截图：`.\verify-pixel.ps1`。
+- 指定真实 Windows 缩放门禁：`.\verify-dpi.ps1 -ExpectedScalePercent 100`（另跑 125、150）。
+- 10 分钟资源占用与隐藏暂停：`.\verify-resource.ps1`。
+- 全量自动检查：`.\verify-all.ps1`（约 11 分钟）。
+
+真实 100% / 125% / 150% Windows 显示缩放需要按 `docs/PROGRESS.md` 的步骤人工切换后复测；自动脚本不会修改系统显示设置。
 
 ## 验证
 

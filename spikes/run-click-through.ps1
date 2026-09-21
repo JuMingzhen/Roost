@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$OutputPath = (Join-Path $PSScriptRoot 'out\click-through.json')
 )

@@ -1,2 +1,8 @@
+bin/
+dist/
+artifacts/
 spikes/bin/
 spikes/out/
+*.user
+*.suo
+*.tmp
