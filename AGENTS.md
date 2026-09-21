@@ -43,6 +43,7 @@
 - 核心规则、待办操作、数据安全与备份：`.\test.ps1`。
 - 桌面系统集成与单实例：`.\verify-system.ps1`。
 - 像素颜色与截图：`.\verify-pixel.ps1`。
+- 指定真实 Windows 缩放门禁：`.\verify-dpi.ps1 -ExpectedScalePercent 100`（另跑 125、150）。
 - 10 分钟资源占用与隐藏暂停：`.\verify-resource.ps1`。
 - 全量自动检查：`.\verify-all.ps1`（约 11 分钟）。
 

@@ -121,6 +121,7 @@ internal static class VerificationRunner
         bool pass = blank.Count == 12 && blankClicks == 12 && petClickHandled && trayLabels &&
                     pet.HotKeyRegisteredForTest && hiddenByHotkey && pausedWhileHidden && hiddenByFullscreen && restoredAfterFullscreen;
         Dictionary<string, object> result = Base("system");
+        result["actualScalePercent"] = GetScalePercent(pet);
         result["blankPointsSent"] = blank.Count;
         result["blankClicksReceivedByUnderlyingWindow"] = blankClicks;
         result["petClickHandled"] = petClickHandled;
@@ -148,6 +149,7 @@ internal static class VerificationRunner
         int[] sizes = new int[] { 96, 128, 160 };
         int[] scales = new int[] { 100, 125, 150 };
         List<Dictionary<string, object>> cases = new List<Dictionary<string, object>>();
+        List<Dictionary<string, object>> actualCases = new List<Dictionary<string, object>>();
         bool allPass = true;
         foreach (PetState state in states)
         {
@@ -176,17 +178,74 @@ internal static class VerificationRunner
                 }
             }
         }
+
+        Form host = new Form
+        {
+            StartPosition = FormStartPosition.Manual,
+            Location = new Point(Screen.PrimaryScreen.WorkingArea.Left + 20, Screen.PrimaryScreen.WorkingArea.Top + 20),
+            ClientSize = new Size(180, 180),
+            FormBorderStyle = FormBorderStyle.None,
+            ShowInTaskbar = false,
+            TopMost = true,
+            BackColor = Color.Magenta
+        };
+        host.Controls.Add(view);
+        view.Location = Point.Empty;
+        host.Show();
+        Pump(200);
+        int actualScale = GetScalePercent(view);
+        bool actualPass = true;
+        foreach (PetState state in states)
+        {
+            view.State = state;
+            HashSet<int> colors = view.SourceColorsForTest(state);
+            foreach (int size in sizes)
+            {
+                view.Size = new Size(size, size);
+                host.ClientSize = view.Size;
+                Pump(30);
+                using (Bitmap capture = new Bitmap(size, size, PixelFormat.Format32bppArgb))
+                {
+                    view.DrawToBitmap(capture, new Rectangle(Point.Empty, capture.Size));
+                    int unexpected = 0;
+                    int spritePixels = 0;
+                    for (int y = 0; y < capture.Height; y++)
+                        for (int x = 0; x < capture.Width; x++)
+                        {
+                            int color = capture.GetPixel(x, y).ToArgb();
+                            if (color == host.BackColor.ToArgb()) continue;
+                            spritePixels++;
+                            if (!colors.Contains(color)) unexpected++;
+                        }
+                    bool pass = spritePixels > 0 && unexpected == 0;
+                    actualPass = actualPass && pass;
+                    string fileName = string.Format("actual-{0}pct-{1}-{2}px.png", actualScale, state.ToString().ToLowerInvariant(), size);
+                    capture.Save(Path.Combine(screenshotDirectory, fileName), ImageFormat.Png);
+                    actualCases.Add(new Dictionary<string, object>
+                    {
+                        { "actualScalePercent", actualScale }, { "state", state.ToString() },
+                        { "sizeTierPixels", size }, { "spritePixels", spritePixels },
+                        { "unexpectedPixels", unexpected }, { "pass", pass }
+                    });
+                }
+            }
+        }
+        host.Close();
         view.Dispose();
         Dictionary<string, object> result = Base("pixel");
         result["method"] = "Actual Roost assets rendered with the production nearest-neighbor path; exact ARGB palette membership";
         result["cases"] = cases;
         result["caseCount"] = cases.Count;
-        result["functionalPass"] = allPass;
-        result["hardwareCoverage"] = "simulated scale layouts; real 100/125/150 Windows settings remain manual";
-        result["overallPass"] = allPass;
-        result["status"] = allPass ? "PASS_WITH_MANUAL_DPI_GATE" : "FAIL";
+        result["actualScalePercent"] = actualScale;
+        result["actualCases"] = actualCases;
+        result["actualCaseCount"] = actualCases.Count;
+        result["actualHardwarePass"] = actualPass;
+        result["functionalPass"] = allPass && actualPass;
+        result["hardwareCoverage"] = "current real Windows scale captured; repeat at 100/125/150 for complete coverage";
+        result["overallPass"] = allPass && actualPass;
+        result["status"] = allPass && actualPass ? "PASS_WITH_MANUAL_DPI_GATE" : "FAIL";
         WriteJson(outputPath, result);
-        return allPass ? 0 : 1;
+        return allPass && actualPass ? 0 : 1;
     }
 
     private static int RunCpu(string outputPath, int visibleSeconds, int hiddenSeconds)
@@ -288,6 +347,14 @@ internal static class VerificationRunner
             { "test", name }, { "timestampUtc", DateTime.UtcNow.ToString("o") },
             { "osVersion", Environment.OSVersion.VersionString }, { "logicalProcessors", Environment.ProcessorCount }
         };
+    }
+
+    private static int GetScalePercent(Control control)
+    {
+        using (Graphics graphics = control.CreateGraphics())
+        {
+            return (int)Math.Round(graphics.DpiX / 96.0 * 100.0);
+        }
     }
 
     private static void WriteJson(string path, Dictionary<string, object> result)
