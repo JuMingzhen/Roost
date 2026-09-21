@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [int]$VisibleSeconds = 600,
     [int]$HiddenSeconds = 30

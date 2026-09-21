@@ -41,6 +41,7 @@
 - 构建：`.\build.ps1`，输出到 `dist\`。
 - 运行：`.\run.ps1`。
 - 核心规则、待办操作、数据安全与备份：`.\test.ps1`。
+- Windows PowerShell 5.1 脚本编码与语法：`.\verify-powershell.ps1`（也会由 `test.ps1` 自动执行）。
 - 桌面系统集成与单实例：`.\verify-system.ps1`。
 - 像素颜色与截图：`.\verify-pixel.ps1`。
 - 指定真实 Windows 缩放门禁：`.\verify-dpi.ps1 -ExpectedScalePercent 100`（另跑 125、150）。

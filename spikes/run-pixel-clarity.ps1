@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$OutputPath = (Join-Path $PSScriptRoot 'out\pixel-clarity.json'),
     [string]$ScreenshotDirectory = (Join-Path $PSScriptRoot 'out\pixel-screenshots')
