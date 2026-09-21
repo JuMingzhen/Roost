@@ -37,6 +37,7 @@ internal static class VerificationRunner
     [STAThread]
     private static int Main(string[] args)
     {
+        EnablePerMonitorDpi();
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         if (args.Length == 0)
@@ -55,6 +56,18 @@ internal static class VerificationRunner
         {
             Console.Error.WriteLine(exception.ToString());
             return 70;
+        }
+    }
+
+    private static void EnablePerMonitorDpi()
+    {
+        try
+        {
+            if (!NativeMethods.SetProcessDpiAwarenessContext(new IntPtr(-4))) NativeMethods.SetProcessDPIAware();
+        }
+        catch (EntryPointNotFoundException)
+        {
+            NativeMethods.SetProcessDPIAware();
         }
     }
 
