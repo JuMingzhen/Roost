@@ -37,6 +37,7 @@ namespace Roost.Core
     {
         public bool OnlyToday { get; set; }
         public bool ListExpanded { get; set; }
+        public bool ListVisible { get; set; }
         public bool HasSavedPosition { get; set; }
         public int PetX { get; set; }
         public int PetY { get; set; }
@@ -49,6 +50,7 @@ namespace Roost.Core
         public RoostSettings()
         {
             ListExpanded = false;
+            ListVisible = true;
             SizeTier = 2;
             Opacity = 1.0;
             DayStartMinutes = 4 * 60;
@@ -82,4 +84,3 @@ namespace Roost.Core
         }
     }
 }
-

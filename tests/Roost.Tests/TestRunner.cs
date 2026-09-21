@@ -26,6 +26,7 @@ internal static class TestRunner
         Run("04:00 边界", TestDayBoundary);
         Run("待办新建、编辑、完成、删除撤销和星标", TestTodoOperations);
         Run("布局翻转、找回、贴边和透明度", TestLayoutRules);
+        Run("全屏窗口判定", TestFullscreenRules);
         Run("原子写入中强杀不损坏主文件", TestCrashDuringWrite);
         Run("自动备份只保留最近七份", TestBackupRetention);
 
@@ -144,6 +145,16 @@ internal static class TestRunner
         try { service.Create("   ", null, null, null, false); }
         catch (ArgumentException) { rejected = true; }
         True(rejected);
+    }
+
+    private static void TestFullscreenRules()
+    {
+        Rectangle monitor = new Rectangle(0, 0, 1920, 1080);
+        True(FullscreenRules.IsFullscreen(new Rectangle(0, 0, 1920, 1080), monitor, true, false));
+        True(FullscreenRules.IsFullscreen(new Rectangle(-1, 0, 1922, 1080), monitor, true, false));
+        False(FullscreenRules.IsFullscreen(new Rectangle(0, 0, 1910, 1080), monitor, true, false));
+        False(FullscreenRules.IsFullscreen(monitor, monitor, false, false));
+        False(FullscreenRules.IsFullscreen(monitor, monitor, true, true));
     }
 
     private static void TestCrashDuringWrite()
