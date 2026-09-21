@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
@@ -36,6 +37,37 @@ namespace Roost.App
         private bool screenLocked;
         private string lastDeletedId;
         private SettingsForm settingsForm;
+        private bool hotKeyRegistered;
+
+        internal int AnimationFrameCountForTest { get { return sprite.FrameCount; } }
+        internal Rectangle SpriteBoundsForTest { get { return sprite.Bounds; } }
+        internal Rectangle ListBoundsForTest { get { return listPanel.Bounds; } }
+        internal bool HotKeyRegisteredForTest { get { return hotKeyRegistered; } }
+        internal string[] TrayLabelsForTest
+        {
+            get { return new string[] { showHideItem.Text, "设置", "退出" }; }
+        }
+
+        internal bool HitTestForTest(Point clientPoint)
+        {
+            return Region != null && Region.IsVisible(clientPoint);
+        }
+
+        internal void ToggleVisibilityForTest()
+        {
+            ToggleFromUser();
+        }
+
+        internal void EvaluateFullscreenForTest(bool fullscreen)
+        {
+            ApplyFullscreenState(fullscreen);
+        }
+
+        internal void CloseForTest()
+        {
+            allowExit = true;
+            Close();
+        }
 
         internal PetForm(TodoService todos, uint showExistingMessage, string assetRoot)
         {
@@ -128,7 +160,10 @@ namespace Roost.App
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
-            if (!todos.Data.Settings.FirstRunCompleted && todos.Data.Todos.Count == 0)
+            string readyFile = Environment.GetEnvironmentVariable("ROOST_TEST_READY_FILE");
+            if (!string.IsNullOrEmpty(readyFile)) File.WriteAllText(readyFile, "ready");
+            bool skipFirstRun = Environment.GetEnvironmentVariable("ROOST_SKIP_FIRST_RUN") == "1";
+            if (!skipFirstRun && !todos.Data.Settings.FirstRunCompleted && todos.Data.Todos.Count == 0)
             {
                 BeginInvoke((MethodInvoker)delegate { ShowFirstRunGuide(); });
             }
@@ -137,7 +172,8 @@ namespace Roost.App
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            if (!NativeMethods.RegisterHotKey(Handle, NativeMethods.HOTKEY_ID, NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT, (uint)Keys.H))
+            hotKeyRegistered = NativeMethods.RegisterHotKey(Handle, NativeMethods.HOTKEY_ID, NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT, (uint)Keys.H);
+            if (!hotKeyRegistered && Environment.GetEnvironmentVariable("ROOST_SKIP_HOTKEY_WARNING") != "1")
             {
                 BeginInvoke((MethodInvoker)delegate
                 {
@@ -171,6 +207,8 @@ namespace Roost.App
             if ((uint)message.Msg == showExistingMessage)
             {
                 ShowFromUser();
+                string showFile = Environment.GetEnvironmentVariable("ROOST_TEST_SHOW_FILE");
+                if (!string.IsNullOrEmpty(showFile)) File.WriteAllText(showFile, "shown");
                 return;
             }
             if (message.Msg == NativeMethods.WM_HOTKEY && message.WParam.ToInt32() == NativeMethods.HOTKEY_ID)
@@ -428,7 +466,11 @@ namespace Roost.App
 
         private void CheckFullscreen()
         {
-            bool fullscreen = IsForegroundFullscreen();
+            ApplyFullscreenState(IsForegroundFullscreen());
+        }
+
+        private void ApplyFullscreenState(bool fullscreen)
+        {
             if (fullscreen && Visible && !userHidden)
             {
                 fullscreenHidden = true;
@@ -494,4 +536,3 @@ namespace Roost.App
         }
     }
 }
-

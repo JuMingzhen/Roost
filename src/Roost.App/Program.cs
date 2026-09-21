@@ -21,7 +21,8 @@ namespace Roost.App
                 uint showMessage = NativeMethods.RegisterWindowMessage(ShowMessageName);
                 if (!created)
                 {
-                    NativeMethods.PostMessage(NativeMethods.HWND_BROADCAST, showMessage, IntPtr.Zero, IntPtr.Zero);
+                    IntPtr existing = NativeMethods.FindWindow(null, "Roost");
+                    NativeMethods.PostMessage(existing == IntPtr.Zero ? NativeMethods.HWND_BROADCAST : existing, showMessage, IntPtr.Zero, IntPtr.Zero);
                     return 0;
                 }
 
@@ -65,4 +66,3 @@ namespace Roost.App
         }
     }
 }
-

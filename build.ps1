@@ -43,6 +43,18 @@ $testArguments = @(
 & $compiler $testArguments
 if ($LASTEXITCODE -ne 0) { throw "Roost.Tests 编译失败：$LASTEXITCODE" }
 
+$verifySources = @(Get-ChildItem -LiteralPath (Join-Path $root 'tests\Roost.Verify') -Filter '*.cs' | ForEach-Object FullName)
+$verifyArguments = @(
+    '/nologo', '/target:exe', '/optimize+', '/debug-', '/platform:anycpu',
+    "/out:$(Join-Path $dist 'Roost.Verify.exe')",
+    "/reference:$(Join-Path $dist 'Roost.exe')",
+    "/reference:$(Join-Path $bin 'Roost.Core.dll')",
+    '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Drawing.dll',
+    '/reference:System.Windows.Forms.dll', '/reference:System.Web.Extensions.dll'
+) + $verifySources
+& $compiler $verifyArguments
+if ($LASTEXITCODE -ne 0) { throw "Roost.Verify 编译失败：$LASTEXITCODE" }
+
 Copy-Item -LiteralPath (Join-Path $bin 'Roost.Core.dll') -Destination $dist -Force
 $assetDestination = Join-Path $dist 'assets'
 if (Test-Path -LiteralPath $assetDestination) {

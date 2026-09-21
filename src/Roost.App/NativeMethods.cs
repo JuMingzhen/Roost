@@ -77,6 +77,8 @@ namespace Roost.App
 
         [DllImport("user32.dll", SetLastError = true)]
         internal static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+        internal static extern IntPtr SendMessageForTest(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     }
 }
-

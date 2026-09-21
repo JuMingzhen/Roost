@@ -71,6 +71,33 @@ namespace Roost.App
 
         internal int FrameCount { get { return frame; } }
 
+        internal Bitmap RenderForTest(PetState value, Size target)
+        {
+            Bitmap source = images[value];
+            Bitmap output = new Bitmap(target.Width, target.Height, PixelFormat.Format32bppArgb);
+            using (Graphics graphics = Graphics.FromImage(output))
+            {
+                graphics.CompositingMode = CompositingMode.SourceCopy;
+                graphics.CompositingQuality = CompositingQuality.HighSpeed;
+                graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+                graphics.PixelOffsetMode = PixelOffsetMode.Half;
+                graphics.SmoothingMode = SmoothingMode.None;
+                graphics.Clear(Color.Transparent);
+                graphics.DrawImage(source, new Rectangle(Point.Empty, target), 0, 0, source.Width, source.Height, GraphicsUnit.Pixel);
+            }
+            return output;
+        }
+
+        internal HashSet<int> SourceColorsForTest(PetState value)
+        {
+            HashSet<int> colors = new HashSet<int>();
+            Bitmap source = images[value];
+            for (int y = 0; y < source.Height; y++)
+                for (int x = 0; x < source.Width; x++)
+                    colors.Add(source.GetPixel(x, y).ToArgb());
+            return colors;
+        }
+
         internal Region CreateHitRegion(Rectangle bounds)
         {
             Bitmap source = images[state];
@@ -155,4 +182,3 @@ namespace Roost.App
         }
     }
 }
-
