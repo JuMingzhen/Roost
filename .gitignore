@@ -1,2 +1,7 @@
-spikes/bin/
-spikes/out/
+bin/
+dist/
+artifacts/
+*.user
+*.suo
+*.tmp
+
