@@ -4,6 +4,9 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
@@ -38,11 +41,12 @@ internal static class VerificationRunner
     private static int Main(string[] args)
     {
         EnablePerMonitorDpi();
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("Usage: Roost.Verify.exe <system|pixel|cpu> ...");
+            Console.Error.WriteLine("Usage: Roost.Verify.exe <system|pixel|cpu|ai> ...");
             return 64;
         }
         try
@@ -50,6 +54,7 @@ internal static class VerificationRunner
             if (args[0] == "system") return RunSystem(args[1]);
             if (args[0] == "pixel") return RunPixel(args[1], args[2]);
             if (args[0] == "cpu") return RunCpu(args[1], int.Parse(args[2]), int.Parse(args[3]));
+            if (args[0] == "ai") return RunAi(args[1]);
             return 64;
         }
         catch (Exception exception)
@@ -306,6 +311,167 @@ internal static class VerificationRunner
         return pass ? 0 : 1;
     }
 
+    private static int RunAi(string outputPath)
+    {
+        string credentialTarget = "Roost/Verify/" + Guid.NewGuid().ToString("N");
+        Environment.SetEnvironmentVariable("ROOST_CREDENTIAL_TARGET", credentialTarget);
+        Environment.SetEnvironmentVariable("ROOST_SKIP_HOTKEY_WARNING", "1");
+        CredentialStore.Write(CredentialStore.ApiKeyTarget, "sk-verify-FAKE");
+        ScriptedModelServer server = new ScriptedModelServer();
+        Dictionary<string, object> result = Base("ai");
+        PetForm pet = null;
+        try
+        {
+            string root = NewTestDirectory();
+            string dataPath = Path.Combine(root, "data.json");
+            TodoService service = new TodoService(new TodoRepository(dataPath));
+            DateTime today = TodoRules.LogicalDate(DateTime.Now, service.Data.Settings.DayStartMinutes);
+            service.Create("周报", null, today.AddDays(2).ToString("yyyy-MM-dd"), null, false);
+            service.Create("健身", null, null, null, false);
+            service.Data.Settings.FirstRunCompleted = true;
+            service.Data.Settings.ListVisible = true;
+            service.Data.Settings.AiBaseUrl = server.BaseUrl + "/v1";
+            service.Data.Settings.AiModel = "fake-model";
+            service.Data.Settings.AiPrivacyAcknowledged = true;
+            service.SaveSettings();
+            string assets = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "cat");
+            pet = new PetForm(service, NativeMethods.RegisterWindowMessage("Roost.Verify.Ai." + Guid.NewGuid().ToString("N")), assets);
+            pet.Show();
+            pet.DisableFullscreenDetectionForTest();
+            Pump(300);
+
+            string plan = "{\"status\":\"ok\",\"operations\":[" +
+                "{\"op\":\"add\",\"title\":\"复盘会\",\"date\":\"" + today.AddDays(1).ToString("yyyy-MM-dd") + "\",\"time\":\"15:00\",\"starred\":true}," +
+                "{\"op\":\"delete\",\"id\":\"t2\"}]}";
+            const string sentence = "明天下午三点复盘会很重要，健身不要了";
+
+            // 1. 取消预览：思考动画出现，预览期间和取消后数据都不变，原文保留。
+            byte[] original = File.ReadAllBytes(dataPath);
+            server.Enqueue(200, ChatBody(plan), 400);
+            PreviewProbe cancelProbe = new PreviewProbe(dataPath, original, DialogResult.Cancel);
+            Talk(pet, sentence);
+            Pump(150);
+            bool thinkingShown = pet.ThinkingForTest && pet.PetStateForTest == PetState.Thinking;
+            WaitUntil(delegate { return cancelProbe.Handled && !pet.ThinkingForTest; }, 5000);
+            cancelProbe.Stop();
+            bool deleteListedFirst = cancelProbe.RowTexts.Count == 2 && cancelProbe.RowTexts[0].StartsWith("删除：「健身」");
+            bool cancelKeepsData = cancelProbe.UnchangedWhileOpen && File.ReadAllBytes(dataPath).SequenceEqualTo(original) &&
+                                   service.Data.Todos.Count == 2 && pet.TalkTextForTest == sentence && pet.PetStateForTest != PetState.Thinking;
+            string firstRequest = server.LastRequest;
+            bool requestCarriesContext = firstRequest != null && firstRequest.Contains("Bearer sk-verify-FAKE") &&
+                                         firstRequest.Contains("周报") && firstRequest.Contains("\"model\":\"fake-model\"");
+
+            // 2. 确认：整批生效，出现「撤销这次改动」；撤销后整批还原。
+            server.Enqueue(200, ChatBody(plan), 0);
+            PreviewProbe confirmProbe = new PreviewProbe(dataPath, original, DialogResult.OK);
+            Talk(pet, sentence);
+            WaitUntil(delegate { return confirmProbe.Handled && pet.UndoVisibleForTest; }, 5000);
+            confirmProbe.Stop();
+            TodoItem gym = service.Data.Todos.Find(delegate(TodoItem item) { return item.Title == "健身"; });
+            TodoItem review = service.Data.Todos.Find(delegate(TodoItem item) { return item.Title == "复盘会"; });
+            bool confirmApplies = confirmProbe.UnchangedWhileOpen && gym != null && gym.IsDeleted && review != null &&
+                                  review.IsStarred && review.DueTime == "15:00" && pet.UndoLabelForTest == "已应用 AI 的改动" &&
+                                  pet.TalkTextForTest.Length == 0;
+            pet.RunUndoForTest();
+            RoostData undone = new TodoRepository(dataPath).Load();
+            bool undoRestores = undone.Todos.Count == 2 && !undone.Todos.Exists(delegate(TodoItem item) { return item.IsDeleted || item.Title == "复盘会"; });
+
+            // 3. 失败路径：数据不变，原文保留，宠物冒泡说明原因。
+            byte[] beforeFailures = File.ReadAllBytes(dataPath);
+            bool invalidKey = Failure(pet, server, 401, "{\"error\":{\"message\":\"Incorrect API key provided: sk-verify-FAKE\"}}", "API Key 无效", "sk-verify-FAKE");
+            bool unclear = Failure(pet, server, 200, ChatBody("抱歉，我不明白。"), "我没听懂：抱歉，我不明白。", null);
+            bool ambiguous = Failure(pet, server, 200, ChatBody("{\"status\":\"ambiguous\",\"message\":\"两条都可能\",\"candidates\":[\"t1\",\"t2\"]}"), "「周报」「健身」", null);
+            bool serverDown = Failure(pet, server, 503, "down", "按回车就能重试", null);
+
+            server.Enqueue(200, ChatBody(plan), 3000);
+            int requestsBeforeCancel = server.RequestCount;
+            Talk(pet, sentence);
+            Pump(200);
+            pet.CancelTalkForTest();
+            WaitUntil(delegate { return !pet.ThinkingForTest; }, 3000);
+            Pump(100);
+            bool cancelRequest = !pet.ThinkingForTest && pet.BubbleMessageForTest == null && pet.TalkTextForTest == sentence;
+            WaitUntil(delegate { return server.RequestCount > requestsBeforeCancel; }, 4000);
+            bool failuresKeepData = File.ReadAllBytes(dataPath).SequenceEqualTo(beforeFailures);
+
+            service.Data.Settings.AiBaseUrl = null;
+            int requestsBefore = server.RequestCount;
+            Talk(pet, sentence);
+            Pump(200);
+            string notConfiguredMessage = pet.BubbleMessageForTest;
+            bool notConfigured = notConfiguredMessage != null && notConfiguredMessage.Contains("还没有配置模型") &&
+                                 notConfiguredMessage.Contains("不配置也能正常使用本地待办") && server.RequestCount == requestsBefore;
+
+            bool pass = thinkingShown && deleteListedFirst && cancelKeepsData && requestCarriesContext && confirmApplies && undoRestores &&
+                        invalidKey && unclear && ambiguous && serverDown && cancelRequest && failuresKeepData && notConfigured;
+            result["thinkingAnimationWhileWaiting"] = thinkingShown;
+            result["deleteListedFirstInPreview"] = deleteListedFirst;
+            result["previewAndCancelLeaveDataUnchanged"] = cancelKeepsData;
+            result["requestCarriesKeyModelAndTodos"] = requestCarriesContext;
+            result["confirmAppliesBatch"] = confirmApplies;
+            result["undoRestoresBatch"] = undoRestores;
+            result["invalidKeyBubbleWithoutKey"] = invalidKey;
+            result["unclearShowsModelReply"] = unclear;
+            result["ambiguousListsCandidates"] = ambiguous;
+            result["serverErrorOffersRetry"] = serverDown;
+            result["userCancelKeepsInput"] = cancelRequest;
+            result["failuresLeaveDataUnchanged"] = failuresKeepData;
+            result["notConfiguredGuidesToSettings"] = notConfigured;
+            result["overallPass"] = pass;
+            result["status"] = pass ? "PASS" : "FAIL";
+            WriteJson(outputPath, result);
+            return pass ? 0 : 1;
+        }
+        finally
+        {
+            if (pet != null) pet.CloseForTest();
+            server.Stop();
+            CredentialStore.Delete(credentialTarget);
+        }
+    }
+
+    private static bool Failure(PetForm pet, ScriptedModelServer server, int status, string body, string expected, string forbidden)
+    {
+        const string sentence = "把会改到四点";
+        server.Enqueue(status, body, 0);
+        Talk(pet, sentence);
+        WaitUntil(delegate { return !pet.ThinkingForTest && pet.BubbleMessageForTest != null; }, 5000);
+        string message = pet.BubbleMessageForTest;
+        bool ok = message != null && message.Contains(expected) && (forbidden == null || !message.Contains(forbidden)) &&
+                  pet.TalkTextForTest == sentence;
+        if (!ok) Console.Error.WriteLine("AI failure case {0} unexpected bubble: {1}", status, message == null ? "(none)" : "(present)");
+        return ok;
+    }
+
+    private static void Talk(PetForm pet, string sentence)
+    {
+        // 验证器没有 Application.Run 主循环：模态预览关闭后 WinForms 会卸载同步上下文，
+        // 下一次 await 的后续代码就会跑到线程池上。真实应用有主循环，不受影响。
+        if (!(SynchronizationContext.Current is WindowsFormsSynchronizationContext))
+            SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+        pet.SendTalkForTest(sentence);
+    }
+
+    private static string ChatBody(string content)
+    {
+        Dictionary<string, object> message = new Dictionary<string, object> { { "role", "assistant" }, { "content", content } };
+        Dictionary<string, object> choice = new Dictionary<string, object> { { "index", 0 }, { "message", message } };
+        return Json.Serialize(new Dictionary<string, object> { { "choices", new object[] { choice } } });
+    }
+
+    private static void WaitUntil(Func<bool> condition, int milliseconds)
+    {
+        Stopwatch clock = Stopwatch.StartNew();
+        while (!condition() && clock.ElapsedMilliseconds < milliseconds) { Application.DoEvents(); Thread.Sleep(5); }
+    }
+
+    private static bool SequenceEqualTo(this byte[] left, byte[] right)
+    {
+        if (left.Length != right.Length) return false;
+        for (int i = 0; i < left.Length; i++) if (left[i] != right[i]) return false;
+        return true;
+    }
+
     private static List<Point> FindPoints(PetForm form, bool visible, int count)
     {
         List<Point> points = new List<Point>();
@@ -374,5 +540,131 @@ internal static class VerificationRunner
         SetCursorPos(x, y);
         mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
         mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+    }
+}
+
+internal sealed class PreviewProbe
+{
+    private readonly System.Windows.Forms.Timer timer;
+
+    internal bool Handled { get; private set; }
+    internal bool UnchangedWhileOpen { get; private set; }
+    internal List<string> RowTexts { get; private set; }
+
+    internal PreviewProbe(string dataPath, byte[] expected, DialogResult answer)
+    {
+        RowTexts = new List<string>();
+        timer = new System.Windows.Forms.Timer { Interval = 50 };
+        timer.Tick += delegate
+        {
+            foreach (Form form in Application.OpenForms)
+            {
+                AiPreviewForm preview = form as AiPreviewForm;
+                if (preview == null || Handled) continue;
+                Handled = true;
+                timer.Stop();
+                RowTexts = preview.RowTextsForTest;
+                byte[] current = File.ReadAllBytes(dataPath);
+                bool same = current.Length == expected.Length;
+                for (int i = 0; same && i < current.Length; i++) same = current[i] == expected[i];
+                UnchangedWhileOpen = same;
+                preview.DialogResult = answer;
+                return;
+            }
+        };
+        timer.Start();
+    }
+
+    internal void Stop()
+    {
+        timer.Stop();
+        timer.Dispose();
+    }
+}
+
+internal sealed class ScriptedModelServer
+{
+    private readonly TcpListener listener;
+    private readonly Queue<object[]> script = new Queue<object[]>();
+    private readonly Thread worker;
+    private volatile bool stopping;
+    private int requestCount;
+    private string lastRequest;
+
+    internal string BaseUrl { get; private set; }
+    internal int RequestCount { get { return Thread.VolatileRead(ref requestCount); } }
+    internal string LastRequest { get { lock (script) return lastRequest; } }
+
+    internal ScriptedModelServer()
+    {
+        listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        BaseUrl = "http://127.0.0.1:" + ((IPEndPoint)listener.LocalEndpoint).Port;
+        worker = new Thread(Serve) { IsBackground = true };
+        worker.Start();
+    }
+
+    internal void Enqueue(int status, string body, int delayMilliseconds)
+    {
+        lock (script) script.Enqueue(new object[] { status, body, delayMilliseconds });
+    }
+
+    internal void Stop()
+    {
+        stopping = true;
+        listener.Stop();
+    }
+
+    private void Serve()
+    {
+        while (!stopping)
+        {
+            TcpClient client;
+            try { client = listener.AcceptTcpClient(); }
+            catch (SocketException) { return; }
+            catch (ObjectDisposedException) { return; }
+            using (client)
+            using (NetworkStream stream = client.GetStream())
+            {
+                try
+                {
+                    string request = ReadRequest(stream);
+                    object[] entry;
+                    lock (script)
+                    {
+                        lastRequest = request;
+                        entry = script.Count > 0 ? script.Dequeue() : new object[] { 500, "no script", 0 };
+                    }
+                    Interlocked.Increment(ref requestCount);
+                    if ((int)entry[2] > 0) Thread.Sleep((int)entry[2]);
+                    byte[] payload = Encoding.UTF8.GetBytes((string)entry[1]);
+                    byte[] head = Encoding.ASCII.GetBytes(string.Format("HTTP/1.1 {0} X\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {1}\r\nConnection: close\r\n\r\n", entry[0], payload.Length));
+                    stream.Write(head, 0, head.Length);
+                    stream.Write(payload, 0, payload.Length);
+                }
+                catch (IOException) { }
+            }
+        }
+    }
+
+    private static string ReadRequest(NetworkStream stream)
+    {
+        MemoryStream received = new MemoryStream();
+        byte[] buffer = new byte[8192];
+        while (true)
+        {
+            int read = stream.Read(buffer, 0, buffer.Length);
+            if (read <= 0) break;
+            received.Write(buffer, 0, read);
+            byte[] bytes = received.ToArray();
+            string text = Encoding.UTF8.GetString(bytes);
+            int headerEnd = text.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+            if (headerEnd < 0) continue;
+            int contentLength = 0;
+            foreach (string line in text.Substring(0, headerEnd).Split(new[] { "\r\n" }, StringSplitOptions.None))
+                if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase)) contentLength = int.Parse(line.Substring(15).Trim());
+            if (bytes.Length >= Encoding.UTF8.GetByteCount(text.Substring(0, headerEnd + 4)) + contentLength) break;
+        }
+        return Encoding.UTF8.GetString(received.ToArray());
     }
 }

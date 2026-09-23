@@ -11,6 +11,7 @@ namespace Roost.App
         internal const int WM_DISPLAYCHANGE = 0x007E;
         internal const int WM_DPICHANGED = 0x02E0;
         internal const int HOTKEY_ID = 0x524F;
+        internal const int TALK_HOTKEY_ID = 0x5250;
         internal const uint MOD_CONTROL = 0x0002;
         internal const uint MOD_ALT = 0x0001;
         internal const uint MONITOR_DEFAULTTONEAREST = 2;
@@ -53,6 +54,9 @@ namespace Roost.App
 
         [DllImport("user32.dll")]
         internal static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        internal static extern bool SetForegroundWindow(IntPtr window);
 
         [DllImport("user32.dll")]
         internal static extern bool GetWindowRect(IntPtr window, out RECT rectangle);

@@ -126,6 +126,30 @@ internal static class TestRunner
         Equal(LayoutRules.MinimumOpacity, LayoutRules.ClampOpacity(0.01));
         False(LayoutRules.IsDrag(new Point(10, 10), new Point(13, 14), 5));
         True(LayoutRules.IsDrag(new Point(10, 10), new Point(16, 10), 5));
+
+        Size bubble = new Size(240, 90);
+        Point[] anchors = { new Point(900, 500), new Point(1800, 900), new Point(20, 900), new Point(1800, 10), new Point(10, 10) };
+        foreach (Point anchor in anchors)
+        {
+            PetLayout plain = LayoutRules.Compute(anchor, new Size(128, 128), new Size(348, 476), work, true, 8);
+            PetLayout withBubble = LayoutRules.Compute(anchor, new Size(128, 128), new Size(348, 476), bubble, work, true, 8);
+            Rectangle petOnScreen = Offset(withBubble.PetBounds, withBubble.WindowBounds);
+            Equal(Offset(plain.PetBounds, plain.WindowBounds), petOnScreen);
+            Rectangle bubbleOnScreen = Offset(withBubble.BubbleBounds, withBubble.WindowBounds);
+            Equal(bubble, bubbleOnScreen.Size);
+            True(work.Contains(withBubble.WindowBounds));
+            False(bubbleOnScreen.IntersectsWith(petOnScreen));
+            if (anchor.Y > 200 && anchor.Y < 800)
+                False(bubbleOnScreen.IntersectsWith(Offset(withBubble.ListBounds, withBubble.WindowBounds)));
+        }
+        PetLayout hiddenList = LayoutRules.Compute(new Point(900, 500), new Size(96, 96), new Size(348, 476), bubble, work, false, 8);
+        True(hiddenList.ListBounds.IsEmpty);
+        Equal(new Rectangle(828, 402, 240, 90), Offset(hiddenList.BubbleBounds, hiddenList.WindowBounds));
+    }
+
+    private static Rectangle Offset(Rectangle relative, Rectangle window)
+    {
+        return new Rectangle(relative.X + window.X, relative.Y + window.Y, relative.Width, relative.Height);
     }
 
     private static void TestTodoOperations()

@@ -21,6 +21,10 @@ namespace Roost.App
         private readonly Panel undoPanel;
         private readonly Label undoLabel;
         private readonly Button undoButton;
+        private readonly TextBox talkBox;
+        private readonly Button talkButton;
+        private readonly BubbleView bubble;
+        private readonly Timer bubbleTimer;
         private readonly NotifyIcon tray;
         private readonly ToolStripMenuItem showHideItem;
         private readonly Timer fullscreenTimer;
@@ -35,14 +39,44 @@ namespace Roost.App
         private bool userHidden;
         private bool fullscreenHidden;
         private bool screenLocked;
-        private string lastDeletedId;
+        private Action pendingUndo;
         private SettingsForm settingsForm;
         private bool hotKeyRegistered;
+        private bool talkHotKeyRegistered;
+        private Size bubbleSize;
+        private bool hovering;
+        private bool celebrating;
+        private System.Threading.CancellationTokenSource talkCancel;
+        private static readonly Size ListSize = new Size(348, 476);
 
         internal int AnimationFrameCountForTest { get { return sprite.FrameCount; } }
         internal Rectangle SpriteBoundsForTest { get { return sprite.Bounds; } }
         internal Rectangle ListBoundsForTest { get { return listPanel.Bounds; } }
         internal bool HotKeyRegisteredForTest { get { return hotKeyRegistered; } }
+        internal bool TalkHotKeyRegisteredForTest { get { return talkHotKeyRegistered; } }
+        internal string BubbleMessageForTest { get { return bubble.MessageForTest; } }
+        internal PetState PetStateForTest { get { return sprite.State; } }
+        internal bool ThinkingForTest { get { return talkCancel != null; } }
+        internal string TalkTextForTest { get { return talkBox.Text; } }
+        internal bool UndoVisibleForTest { get { return undoPanel.Visible; } }
+        internal string UndoLabelForTest { get { return undoLabel.Text; } }
+
+        internal void SendTalkForTest(string text)
+        {
+            UpdateTalkState();
+            talkBox.Text = text;
+            SendTalk();
+        }
+
+        internal void RunUndoForTest()
+        {
+            RunUndo();
+        }
+
+        internal void CancelTalkForTest()
+        {
+            if (talkCancel != null) talkCancel.Cancel();
+        }
         internal string[] TrayLabelsForTest
         {
             get { return new string[] { showHideItem.Text, "设置", "退出" }; }
@@ -94,37 +128,52 @@ namespace Roost.App
             sprite.MouseDown += SpriteMouseDown;
             sprite.MouseMove += SpriteMouseMove;
             sprite.MouseUp += SpriteMouseUp;
-            sprite.MouseEnter += delegate { if (!dragStarted) SetPetState(PetState.Hover); };
-            sprite.MouseLeave += delegate { if (!dragStarted && sprite.State == PetState.Hover) SetPetState(PetState.Idle); };
+            sprite.MouseEnter += delegate { hovering = true; UpdatePetState(); };
+            sprite.MouseLeave += delegate { hovering = false; UpdatePetState(); };
 
             listPanel = new Panel { BackColor = Color.FromArgb(250, 246, 239), Padding = new Padding(12) };
             Label heading = new Label { Text = "今天要做", Location = new Point(14, 12), Size = new Size(120, 26), Font = new Font(Font.FontFamily, 11F, FontStyle.Bold) };
             Button add = new Button { Text = "+", Location = new Point(294, 8), Size = new Size(40, 34), FlatStyle = FlatStyle.Flat };
             add.FlatAppearance.BorderSize = 0;
             add.Click += delegate { OpenEditor(null); };
-            onlyToday = new CheckBox { Text = "只显示今日", Location = new Point(14, 47), AutoSize = true, Checked = todos.Data.Settings.OnlyToday };
+            onlyToday = new CheckBox { Text = "只显示今日", Location = new Point(14, 80), AutoSize = true, Checked = todos.Data.Settings.OnlyToday };
             onlyToday.CheckedChanged += delegate
             {
                 todos.Data.Settings.OnlyToday = onlyToday.Checked;
                 SaveSettingsAndRefresh();
             };
-            Button aiEntry = new Button { Text = "跟宠物说（配置模型后可用）", Location = new Point(136, 42), Size = new Size(198, 30), FlatStyle = FlatStyle.Flat, ForeColor = Color.DimGray };
-            aiEntry.FlatAppearance.BorderColor = Color.Silver;
-            aiEntry.Click += delegate { OpenSettings(); };
-            rows = new FlowLayoutPanel { Location = new Point(14, 82), Size = new Size(320, 316), FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
-            moreButton = new Button { Location = new Point(14, 402), Size = new Size(320, 28), FlatStyle = FlatStyle.Flat, Visible = false };
+            talkBox = new TextBox { Location = new Point(14, 45), Size = new Size(260, 28) };
+            talkBox.KeyDown += delegate(object sender, KeyEventArgs e)
+            {
+                if (e.KeyCode != Keys.Enter) return;
+                e.SuppressKeyPress = true;
+                if (talkCancel == null) SendTalk();
+            };
+            talkBox.MouseDown += delegate { if (!AiReady()) PromptConfigureAi(); };
+            talkButton = new Button { Text = "发送", Location = new Point(280, 43), Size = new Size(54, 30), FlatStyle = FlatStyle.Flat };
+            talkButton.FlatAppearance.BorderColor = Color.Silver;
+            talkButton.Click += delegate
+            {
+                if (talkCancel != null) talkCancel.Cancel();
+                else SendTalk();
+            };
+            rows = new FlowLayoutPanel { Location = new Point(14, 108), Size = new Size(320, 322), FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
+            moreButton = new Button { Location = new Point(14, 434), Size = new Size(320, 28), FlatStyle = FlatStyle.Flat, Visible = false };
             moreButton.FlatAppearance.BorderSize = 0;
             moreButton.Click += delegate
             {
                 todos.Data.Settings.ListExpanded = !todos.Data.Settings.ListExpanded;
                 SaveSettingsAndRefresh();
             };
-            undoPanel = new Panel { Location = new Point(14, 398), Size = new Size(320, 38), BackColor = Color.FromArgb(60, 60, 60), Visible = false };
+            undoPanel = new Panel { Location = new Point(14, 428), Size = new Size(320, 38), BackColor = Color.FromArgb(60, 60, 60), Visible = false };
             undoLabel = new Label { Text = "已删除", ForeColor = Color.White, Location = new Point(12, 9), AutoSize = true };
-            undoButton = new Button { Text = "撤销", Location = new Point(236, 4), Size = new Size(72, 30), FlatStyle = FlatStyle.Flat, ForeColor = Color.White };
-            undoButton.Click += delegate { UndoDelete(); };
+            undoButton = new Button { Text = "撤销", Location = new Point(196, 4), Size = new Size(112, 30), FlatStyle = FlatStyle.Flat, ForeColor = Color.White };
+            undoButton.Click += delegate { RunUndo(); };
             undoPanel.Controls.AddRange(new Control[] { undoLabel, undoButton });
-            listPanel.Controls.AddRange(new Control[] { heading, add, onlyToday, aiEntry, rows, moreButton, undoPanel });
+            listPanel.Controls.AddRange(new Control[] { heading, add, talkBox, talkButton, onlyToday, rows, moreButton, undoPanel });
+            bubble = new BubbleView { Font = Font };
+            bubble.Dismissed += delegate { bubbleTimer.Stop(); bubbleSize = Size.Empty; ApplyLayout(); };
+            Controls.Add(bubble);
             Controls.Add(listPanel);
             Controls.Add(sprite);
 
@@ -143,11 +192,14 @@ namespace Roost.App
             fullscreenTimer.Tick += delegate { CheckFullscreen(); };
             undoTimer = new Timer { Interval = 5000 };
             undoTimer.Tick += delegate { HideUndo(); };
+            bubbleTimer = new Timer { Interval = 15000 };
+            bubbleTimer.Tick += delegate { bubble.Dismiss(); };
             completionTimer = new Timer { Interval = 3000 };
             completionTimer.Tick += delegate
             {
                 completionTimer.Stop();
-                if (!dragStarted) SetPetState(PetState.Idle);
+                celebrating = false;
+                UpdatePetState();
                 RefreshList();
             };
 
@@ -158,6 +210,7 @@ namespace Roost.App
                 : new Point(work.Right - size - 24, work.Bottom - size - 24);
             ApplyLayout();
             RefreshList();
+            UpdateTalkState();
             Opacity = LayoutRules.ClampOpacity(todos.Data.Settings.Opacity);
             fullscreenTimer.Start();
             SystemEvents.SessionSwitch += SessionSwitch;
@@ -186,11 +239,20 @@ namespace Roost.App
                     MessageBox.Show(this, "Ctrl+Alt+H 已被其他程序占用。一键隐藏暂不可用。", "Roost", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 });
             }
+            talkHotKeyRegistered = NativeMethods.RegisterHotKey(Handle, NativeMethods.TALK_HOTKEY_ID, NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT, (uint)Keys.Space);
+            if (!talkHotKeyRegistered && Environment.GetEnvironmentVariable("ROOST_SKIP_HOTKEY_WARNING") != "1")
+            {
+                BeginInvoke((MethodInvoker)delegate
+                {
+                    MessageBox.Show(this, "Ctrl+Alt+空格 已被其他程序占用。「跟宠物说」快捷键暂不可用，仍可直接点清单上的输入框。", "Roost", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                });
+            }
         }
 
         protected override void OnHandleDestroyed(EventArgs e)
         {
             NativeMethods.UnregisterHotKey(Handle, NativeMethods.HOTKEY_ID);
+            NativeMethods.UnregisterHotKey(Handle, NativeMethods.TALK_HOTKEY_ID);
             base.OnHandleDestroyed(e);
         }
 
@@ -222,6 +284,11 @@ namespace Roost.App
                 ToggleFromUser();
                 return;
             }
+            if (message.Msg == NativeMethods.WM_HOTKEY && message.WParam.ToInt32() == NativeMethods.TALK_HOTKEY_ID)
+            {
+                FocusTalk();
+                return;
+            }
             if (message.Msg == NativeMethods.WM_DISPLAYCHANGE || message.Msg == NativeMethods.WM_DPICHANGED)
             {
                 BeginInvoke((MethodInvoker)delegate { RecoverAndSavePosition(); });
@@ -241,11 +308,16 @@ namespace Roost.App
             int size = PetSize();
             Screen screen = Screen.FromPoint(petAnchor);
             petAnchor = LayoutRules.RecoverPetPosition(petAnchor, new Size(size, size), screen.WorkingArea);
-            PetLayout layout = LayoutRules.Compute(petAnchor, new Size(size, size), new Size(348, 446), screen.WorkingArea, todos.Data.Settings.ListVisible, 8);
+            PetLayout layout = LayoutRules.Compute(petAnchor, new Size(size, size), ListSize, bubbleSize, screen.WorkingArea, todos.Data.Settings.ListVisible, 8);
             Bounds = layout.WindowBounds;
             sprite.Bounds = layout.PetBounds;
             listPanel.Bounds = layout.ListBounds;
             listPanel.Visible = todos.Data.Settings.ListVisible;
+            if (!layout.BubbleBounds.IsEmpty)
+            {
+                bubble.Bounds = layout.BubbleBounds;
+                bubble.BringToFront();
+            }
             ApplyHitRegion();
         }
 
@@ -253,6 +325,7 @@ namespace Roost.App
         {
             Region hit = sprite.CreateHitRegion(sprite.Bounds);
             if (listPanel.Visible) hit.Union(listPanel.Bounds);
+            if (bubble.Visible) hit.Union(bubble.Bounds);
             Region previous = Region;
             Region = hit;
             if (previous != null) previous.Dispose();
@@ -274,7 +347,7 @@ namespace Roost.App
             if (!dragStarted && LayoutRules.IsDrag(mouseDownScreen, current, 5))
             {
                 dragStarted = true;
-                SetPetState(PetState.Drag);
+                UpdatePetState();
             }
             if (dragStarted)
             {
@@ -295,7 +368,7 @@ namespace Roost.App
                 SavePosition();
                 ApplyLayout();
                 dragStarted = false;
-                SetPetState(PetState.Idle);
+                UpdatePetState();
             }
             else
             {
@@ -358,14 +431,13 @@ namespace Roost.App
             if (completed)
             {
                 row.MarkCompleted();
-                SetPetState(PetState.Celebrate);
-                completionTimer.Stop();
-                completionTimer.Start();
+                Celebrate();
             }
             else
             {
                 completionTimer.Stop();
-                SetPetState(PetState.Idle);
+                celebrating = false;
+                UpdatePetState();
                 RefreshList();
             }
         }
@@ -373,20 +445,28 @@ namespace Roost.App
         private void Delete(TodoItem item)
         {
             todos.Delete(item.Id);
-            lastDeletedId = item.Id;
-            undoPanel.Visible = true;
-            undoPanel.BringToFront();
-            undoTimer.Stop();
-            undoTimer.Start();
+            string id = item.Id;
             RefreshList();
+            ShowUndo("已删除", "撤销", 5000, delegate { todos.UndoDelete(id); });
+        }
+
+        private void ShowUndo(string label, string buttonText, int milliseconds, Action undo)
+        {
+            pendingUndo = undo;
+            undoLabel.Text = label;
+            undoButton.Text = buttonText;
+            undoTimer.Stop();
+            undoTimer.Interval = milliseconds;
+            undoTimer.Start();
             undoPanel.Visible = true;
             undoPanel.BringToFront();
         }
 
-        private void UndoDelete()
+        private void RunUndo()
         {
-            if (!string.IsNullOrEmpty(lastDeletedId)) todos.UndoDelete(lastDeletedId);
+            Action undo = pendingUndo;
             HideUndo();
+            if (undo != null) undo();
             RefreshList();
         }
 
@@ -394,7 +474,148 @@ namespace Roost.App
         {
             undoTimer.Stop();
             undoPanel.Visible = false;
-            lastDeletedId = null;
+            pendingUndo = null;
+        }
+
+        private bool AiReady()
+        {
+            return todos.Data.Settings.AiConfigured && !string.IsNullOrEmpty(ReadApiKey());
+        }
+
+        private static string ReadApiKey()
+        {
+            try { return CredentialStore.Read(CredentialStore.ApiKeyTarget); }
+            catch (System.ComponentModel.Win32Exception) { return null; }
+        }
+
+        private void UpdateTalkState()
+        {
+            bool ready = AiReady();
+            bool busy = talkCancel != null;
+            talkBox.ReadOnly = !ready || busy;
+            talkBox.ForeColor = ready ? SystemColors.WindowText : Color.DimGray;
+            if (!ready && talkBox.Text.Length == 0) talkBox.Text = "配置模型后可用（点此设置）";
+            else if (ready && talkBox.Text == "配置模型后可用（点此设置）") talkBox.Text = string.Empty;
+            talkButton.Text = busy ? "取消" : "发送";
+            talkButton.Enabled = ready;
+        }
+
+        private void PromptConfigureAi()
+        {
+            ShowBubble("还没有配置模型，暂时不能跟我说话。不配置也能正常使用本地待办。", "去设置", delegate { OpenSettings(true); });
+        }
+
+        private void FocusTalk()
+        {
+            ShowFromUser();
+            if (!todos.Data.Settings.ListVisible)
+            {
+                todos.Data.Settings.ListVisible = true;
+                todos.SaveSettings();
+                ApplyLayout();
+            }
+            NativeMethods.SetForegroundWindow(Handle);
+            Activate();
+            talkBox.Focus();
+            talkBox.SelectAll();
+            if (!AiReady()) PromptConfigureAi();
+        }
+
+        private async void SendTalk()
+        {
+            if (talkCancel != null) return;
+            if (!AiReady())
+            {
+                PromptConfigureAi();
+                return;
+            }
+            string input = talkBox.Text.Trim();
+            if (input.Length == 0) return;
+
+            RoostSettings settings = todos.Data.Settings;
+            AiRequestContext context = AiRequestContext.Create(todos.Data.Todos, DateTime.Now, settings.DayStartMinutes);
+            AiEndpoint endpoint = new AiEndpoint { BaseUrl = settings.AiBaseUrl, Model = settings.AiModel, ApiKey = ReadApiKey() };
+            bubble.Dismiss();
+            talkCancel = new System.Threading.CancellationTokenSource();
+            UpdateTalkState();
+            UpdatePetState();
+            string reply = null;
+            AiException failure = null;
+            try
+            {
+                reply = await new AiClient().CompleteAsync(endpoint, context.SystemPrompt(), input, 2048, talkCancel.Token);
+            }
+            catch (AiException exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                talkCancel.Dispose();
+                talkCancel = null;
+                UpdateTalkState();
+                UpdatePetState();
+            }
+            if (IsDisposed) return;
+
+            if (failure != null)
+            {
+                if (failure.Kind == AiFailureKind.Cancelled) return;
+                bool configProblem = failure.Kind == AiFailureKind.InvalidKey || failure.Kind == AiFailureKind.NotFound ||
+                                     failure.Kind == AiFailureKind.Rejected || failure.Kind == AiFailureKind.Quota;
+                if (configProblem) ShowBubble(failure.Message, "去设置", delegate { OpenSettings(true); });
+                else ShowBubble(failure.Message + (failure.Retryable ? " 你说的话还在输入框里，按回车就能重试。" : string.Empty), null, null);
+                return;
+            }
+
+            AiPlan plan = AiPlanParser.Parse(reply, context);
+            if (plan.Status == AiPlanStatus.Unclear)
+            {
+                ShowBubble("我没听懂：" + plan.Message + " 换个说法再试试？", null, null);
+                return;
+            }
+            if (plan.Status == AiPlanStatus.Ambiguous)
+            {
+                string matched = plan.CandidateTitles.Count == 0 ? string.Empty : " 匹配到：「" + string.Join("」「", plan.CandidateTitles.ToArray()) + "」。";
+                ShowBubble("我不确定你说的是哪一条。" + matched + "请说得更具体一些，什么都没有改。", null, null);
+                return;
+            }
+
+            List<AiOperation> selected;
+            using (AiPreviewForm preview = new AiPreviewForm(plan))
+            {
+                if (preview.ShowDialog(this) != DialogResult.OK) return;
+                selected = preview.SelectedOperations;
+            }
+            if (selected.Count == 0) return;
+            AiUndo undo = todos.ApplyAi(selected);
+            talkBox.Text = string.Empty;
+            RefreshList();
+            ShowUndo("已应用 AI 的改动", "撤销这次改动", 10000, delegate { todos.UndoAi(undo); });
+            foreach (AiOperation operation in selected)
+            {
+                if (operation.Kind == AiOperationKind.Complete)
+                {
+                    Celebrate();
+                    break;
+                }
+            }
+        }
+
+        private void ShowBubble(string message, string actionText, Action action)
+        {
+            bubbleSize = bubble.Show(message, actionText, action);
+            ApplyLayout();
+            bubbleTimer.Stop();
+            bubbleTimer.Start();
+        }
+
+        private void Celebrate()
+        {
+            celebrating = true;
+            UpdatePetState();
+            completionTimer.Stop();
+            completionTimer.Start();
         }
 
         private void SaveSettingsAndRefresh()
@@ -420,16 +641,30 @@ namespace Roost.App
             ApplyLayout();
         }
 
-        private void SetPetState(PetState state)
+        private void UpdatePetState()
         {
+            // PRD 6.3 优先级：拖动 > 提醒 > 思考 > 庆祝 > 悬停 > 待机。提醒在 M3 接入。
+            PetState state;
+            if (dragStarted) state = PetState.Drag;
+            else if (talkCancel != null) state = PetState.Thinking;
+            else if (celebrating) state = PetState.Celebrate;
+            else if (hovering) state = PetState.Hover;
+            else state = PetState.Idle;
+            if (sprite.State == state) return;
             sprite.State = state;
             ApplyHitRegion();
         }
 
         private void OpenSettings()
         {
+            OpenSettings(false);
+        }
+
+        private void OpenSettings(bool aiTab)
+        {
             if (settingsForm != null && !settingsForm.IsDisposed)
             {
+                if (aiTab) settingsForm.ShowAiTab();
                 settingsForm.Activate();
                 return;
             }
@@ -440,7 +675,9 @@ namespace Roost.App
                 Opacity = LayoutRules.ClampOpacity(todos.Data.Settings.Opacity);
                 ApplyLayout();
                 RefreshList();
+                UpdateTalkState();
             };
+            if (aiTab) settingsForm.ShowAiTab();
             settingsForm.Show(this);
         }
 
@@ -526,7 +763,7 @@ namespace Roost.App
         {
             DialogResult result = MessageBox.Show(
                 this,
-                "欢迎来到 Roost！\r\n\r\n• 点「+」新建待办\r\n• 点宠物折叠或展开清单\r\n• 托盘菜单里可以打开设置\r\n• AI 配置和开机自启已有入口，将在后续里程碑启用\r\n\r\n现在打开设置看看吗？",
+                "欢迎来到 Roost！\r\n\r\n• 点「+」新建待办\r\n• 点宠物折叠或展开清单\r\n• 托盘菜单里可以打开设置\r\n• 在设置的「AI 与自启」里配置模型后，可以用一句话让宠物改计划；不配置也能完整使用本地待办\r\n\r\n现在打开设置看看吗？",
                 "第一次使用",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Information);

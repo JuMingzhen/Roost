@@ -7,7 +7,14 @@ namespace Roost.Core
 {
     public static class CredentialStore
     {
-        public const string ApiKeyTarget = "Roost/ApiKey";
+        public static string ApiKeyTarget
+        {
+            get
+            {
+                string overridden = Environment.GetEnvironmentVariable("ROOST_CREDENTIAL_TARGET");
+                return string.IsNullOrEmpty(overridden) ? "Roost/ApiKey" : overridden;
+            }
+        }
         private const int CRED_TYPE_GENERIC = 1;
         private const int CRED_PERSIST_LOCAL_MACHINE = 2;
         private const int ERROR_NOT_FOUND = 1168;
