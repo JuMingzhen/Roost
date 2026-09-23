@@ -84,6 +84,79 @@ namespace Roost.Core
             Save();
         }
 
+        public AiUndo ApplyAi(IEnumerable<AiOperation> operations)
+        {
+            AiUndo undo = new AiUndo();
+            HashSet<string> captured = new HashSet<string>();
+            foreach (AiOperation operation in operations)
+            {
+                if (operation == null || !operation.IsValid) continue;
+                if (operation.Kind == AiOperationKind.Add)
+                {
+                    TodoItem created = new TodoItem
+                    {
+                        Title = operation.Title,
+                        Notes = operation.Notes ?? string.Empty,
+                        DueDate = operation.DueDate,
+                        DueTime = operation.DueTime,
+                        IsStarred = operation.Starred
+                    };
+                    Data.Todos.Add(created);
+                    undo.CreatedIds.Add(created.Id);
+                    continue;
+                }
+
+                TodoItem item = Find(operation.TargetId);
+                if (item == null || item.IsDeleted) continue;
+                if (captured.Add(item.Id)) undo.Before.Add(item.Clone());
+                switch (operation.Kind)
+                {
+                    case AiOperationKind.Update:
+                        if (operation.HasTitle) item.Title = operation.Title;
+                        if (operation.HasNotes) item.Notes = operation.Notes ?? string.Empty;
+                        if (operation.HasDue)
+                        {
+                            item.DueDate = operation.DueDate;
+                            item.DueTime = operation.DueTime;
+                        }
+                        break;
+                    case AiOperationKind.Complete:
+                        item.IsCompleted = true;
+                        item.CompletedAtUtc = DateTime.UtcNow.ToString("o");
+                        break;
+                    case AiOperationKind.Uncomplete:
+                        item.IsCompleted = false;
+                        item.CompletedAtUtc = null;
+                        break;
+                    case AiOperationKind.Star:
+                        item.IsStarred = true;
+                        break;
+                    case AiOperationKind.Unstar:
+                        item.IsStarred = false;
+                        break;
+                    case AiOperationKind.Delete:
+                        item.IsDeleted = true;
+                        item.DeletedAtUtc = DateTime.UtcNow.ToString("o");
+                        break;
+                }
+                Touch(item);
+            }
+            Save();
+            return undo;
+        }
+
+        public void UndoAi(AiUndo undo)
+        {
+            if (undo == null) throw new ArgumentNullException("undo");
+            Data.Todos.RemoveAll(delegate(TodoItem item) { return undo.CreatedIds.Contains(item.Id); });
+            foreach (TodoItem before in undo.Before)
+            {
+                int index = Data.Todos.FindIndex(delegate(TodoItem item) { return item.Id == before.Id; });
+                if (index >= 0) Data.Todos[index] = before.Clone();
+            }
+            Save();
+        }
+
         public void SaveSettings()
         {
             Save();
@@ -141,5 +214,16 @@ namespace Roost.Core
                 throw new ArgumentException("时刻格式无效。");
         }
     }
-}
 
+    public sealed class AiUndo
+    {
+        public List<TodoItem> Before { get; private set; }
+        public List<string> CreatedIds { get; private set; }
+
+        public AiUndo()
+        {
+            Before = new List<TodoItem>();
+            CreatedIds = new List<string>();
+        }
+    }
+}

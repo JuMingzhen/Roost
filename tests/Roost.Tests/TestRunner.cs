@@ -30,6 +30,11 @@ internal static class TestRunner
         Run("全屏窗口判定", TestFullscreenRules);
         Run("原子写入中强杀不损坏主文件", TestCrashDuringWrite);
         Run("自动备份只保留最近七份", TestBackupRetention);
+        Run("AI 发送范围：未完成 + 7 天内完成", TestAiContextScope);
+        Run("AI 提示词按一天起点给出今天和明天", TestAiPromptDates);
+        Run("AI 回复解析为预览操作", TestAiParseOperations);
+        Run("AI 无效操作、没听懂和有歧义", TestAiParseRejections);
+        Run("AI 预览不改动数据，确认后整批生效并可整批撤销", TestAiApplyAndUndo);
 
         Console.WriteLine("RESULT passed={0} failed={1}", passed, failed);
         return failed == 0 ? 0 : 1;
@@ -217,6 +222,166 @@ internal static class TestRunner
         }
         Equal(7, repository.BackupCount());
         Equal(9, repository.Load().Settings.PetX);
+    }
+
+    private static void TestAiContextScope()
+    {
+        DateTime now = new DateTime(2026, 9, 23, 10, 0, 0);
+        TodoItem open = Item("open", null, null, false, "2026-09-01T00:00:00Z");
+        TodoItem recent = Item("recent", null, null, false, "2026-09-01T00:00:00Z");
+        recent.IsCompleted = true;
+        recent.CompletedAtUtc = now.ToUniversalTime().AddDays(-6).ToString("o");
+        TodoItem old = Item("old", null, null, false, "2026-09-01T00:00:00Z");
+        old.IsCompleted = true;
+        old.CompletedAtUtc = now.ToUniversalTime().AddDays(-8).ToString("o");
+        TodoItem deleted = Item("deleted", null, null, false, "2026-09-01T00:00:00Z");
+        deleted.IsDeleted = true;
+        AiRequestContext context = AiRequestContext.Create(new[] { old, deleted, recent, open }, now, 240);
+        Equal(2, context.Items.Count);
+        Equal("t1", context.Items[0].Key);
+        Equal("open", context.Resolve("t1").Title);
+        Equal("recent", context.Resolve("t2").Title);
+        True(context.Resolve("t3") == null);
+        string prompt = context.SystemPrompt();
+        True(prompt.Contains("open"));
+        True(prompt.Contains("recent"));
+        False(prompt.Contains("标题：old"));
+        False(prompt.Contains("标题：deleted"));
+    }
+
+    private static void TestAiPromptDates()
+    {
+        AiRequestContext early = AiRequestContext.Create(new TodoItem[0], new DateTime(2026, 9, 23, 1, 0, 0), 240);
+        string prompt = early.SystemPrompt();
+        True(prompt.Contains("「今天」是 2026-09-22 星期二，「明天」是 2026-09-23 星期三"));
+        AiRequestContext morning = AiRequestContext.Create(new TodoItem[0], new DateTime(2026, 9, 23, 4, 0, 0), 240);
+        True(morning.SystemPrompt().Contains("「今天」是 2026-09-23 星期三，「明天」是 2026-09-24 星期四"));
+        True(prompt.Contains("2026-09-28 星期一（下周一）"));
+    }
+
+    private static void TestAiParseOperations()
+    {
+        DateTime now = new DateTime(2026, 9, 23, 10, 0, 0);
+        TodoItem report = Item("周报", "2026-09-24", null, false, "2026-09-01T00:00:00Z");
+        TodoItem gym = Item("健身", null, null, false, "2026-09-01T00:00:00Z");
+        TodoItem trash = Item("扔垃圾", null, null, false, "2026-09-01T00:00:00Z");
+        AiRequestContext context = AiRequestContext.Create(new[] { report, gym, trash }, now, 240);
+        string aliasReport = AliasOf(context, report), aliasGym = AliasOf(context, gym), aliasTrash = AliasOf(context, trash);
+        string reply = "```json\n{\"status\":\"ok\",\"operations\":[" +
+            "{\"op\":\"add\",\"title\":\"复盘会\",\"date\":\"2026-09-24\",\"time\":\"15:00\",\"starred\":true}," +
+            "{\"op\":\"add\",\"title\":\"交电费\",\"date\":\"2026-09-23\",\"time\":\"08:00\"}," +
+            "{\"op\":\"update\",\"id\":\"" + aliasReport + "\",\"date\":\"2026-09-25\",\"time\":null}," +
+            "{\"op\":\"complete\",\"id\":\"" + aliasGym + "\"}," +
+            "{\"op\":\"delete\",\"id\":\"" + aliasTrash + "\"}]}\n```";
+        AiPlan plan = AiPlanParser.Parse(reply, context);
+        Equal(AiPlanStatus.Ok, plan.Status);
+        Equal(5, plan.ValidCount);
+        Equal("新增：9月24日 星期四 15:00（明天） 复盘会 ★", plan.Operations[0].Summary);
+        False(plan.Operations[0].PastTimeWarning);
+        True(plan.Operations[1].PastTimeWarning);
+        Equal("修改「周报」：时间改为 9月25日 星期五（后天）", plan.Operations[2].Summary);
+        Equal(AiOperationKind.Complete, plan.Operations[3].Kind);
+        Equal(gym.Id, plan.Operations[3].TargetId);
+        Equal("删除：「扔垃圾」", plan.Operations[4].Summary);
+        Equal("删除 1 条，新增 2 条，修改 1 条，状态变更 1 条", plan.Headline());
+    }
+
+    private static void TestAiParseRejections()
+    {
+        DateTime now = new DateTime(2026, 9, 23, 10, 0, 0);
+        TodoItem done = Item("已完成的事", null, null, false, "2026-09-01T00:00:00Z");
+        done.IsCompleted = true;
+        done.CompletedAtUtc = now.ToUniversalTime().ToString("o");
+        TodoItem meetingA = Item("产品会", "2026-09-24", "10:00", false, "2026-09-01T00:00:00Z");
+        TodoItem meetingB = Item("周会", "2026-09-24", "14:00", true, "2026-09-01T00:00:00Z");
+        AiRequestContext context = AiRequestContext.Create(new[] { done, meetingA, meetingB }, now, 240);
+        string aliasDone = AliasOf(context, done), aliasA = AliasOf(context, meetingA), aliasB = AliasOf(context, meetingB);
+
+        AiPlan plan = AiPlanParser.Parse("{\"status\":\"ok\",\"operations\":[" +
+            "{\"op\":\"complete\",\"id\":\"" + aliasDone + "\"}," +
+            "{\"op\":\"delete\",\"id\":null,\"ref\":\"体检\"}," +
+            "{\"op\":\"add\",\"title\":\"只有时刻\",\"date\":null,\"time\":\"09:00\"}," +
+            "{\"op\":\"star\",\"id\":\"" + aliasB + "\"}," +
+            "{\"op\":\"delete\",\"id\":\"" + aliasA + "\"}," +
+            "{\"op\":\"update\",\"id\":\"" + aliasA + "\",\"title\":\"新标题\"}," +
+            "{\"op\":\"rename_all\"}]}", context);
+        Equal(AiPlanStatus.Ok, plan.Status);
+        Equal(1, plan.ValidCount);
+        False(plan.Operations[0].IsValid);
+        False(plan.Operations[1].IsValid);
+        Equal("删除：「体检」", plan.Operations[1].Summary);
+        False(plan.Operations[2].IsValid);
+        False(plan.Operations[3].IsValid);
+        True(plan.Operations[4].IsValid);
+        False(plan.Operations[5].IsValid);
+        False(plan.Operations[6].IsValid);
+
+        AiPlan ambiguous = AiPlanParser.Parse("{\"status\":\"ambiguous\",\"message\":\"有两个会\",\"candidates\":[\"" + aliasA + "\",\"" + aliasB + "\",\"t99\"]}", context);
+        Equal(AiPlanStatus.Ambiguous, ambiguous.Status);
+        Equal(0, ambiguous.Operations.Count);
+        Equal(2, ambiguous.CandidateTitles.Count);
+
+        AiPlan prose = AiPlanParser.Parse("抱歉，我不太明白你的意思。", context);
+        Equal(AiPlanStatus.Unclear, prose.Status);
+        Equal("抱歉，我不太明白你的意思。", prose.Message);
+        AiPlan empty = AiPlanParser.Parse("{\"status\":\"ok\",\"operations\":[]}", context);
+        Equal(AiPlanStatus.Unclear, empty.Status);
+        Equal(AiPlanParser.MaxShownReplyLength + 1, AiPlanParser.TruncateReply(new string('字', 500)).Length);
+    }
+
+    private static void TestAiApplyAndUndo()
+    {
+        string root = NewTestDirectory();
+        string path = Path.Combine(root, "data.json");
+        TodoService service = new TodoService(new TodoRepository(path));
+        TodoItem report = service.Create("周报", "虚构备注", "2026-09-24", null, false);
+        TodoItem gym = service.Create("健身", null, null, null, false);
+        TodoItem trash = service.Create("扔垃圾", null, null, null, true);
+        byte[] beforeParse = File.ReadAllBytes(path);
+
+        DateTime now = new DateTime(2026, 9, 23, 10, 0, 0);
+        AiRequestContext context = AiRequestContext.Create(service.Data.Todos, now, 240);
+        AiPlan plan = AiPlanParser.Parse("{\"status\":\"ok\",\"operations\":[" +
+            "{\"op\":\"add\",\"title\":\"复盘会\",\"date\":\"2026-09-24\",\"time\":\"15:00\",\"starred\":true}," +
+            "{\"op\":\"update\",\"id\":\"" + AliasOf(context, report) + "\",\"title\":\"周报终稿\",\"date\":\"2026-09-25\",\"time\":\"18:00\"}," +
+            "{\"op\":\"complete\",\"id\":\"" + AliasOf(context, gym) + "\"}," +
+            "{\"op\":\"unstar\",\"id\":\"" + AliasOf(context, trash) + "\"}," +
+            "{\"op\":\"delete\",\"id\":\"" + AliasOf(context, trash) + "\"}]}", context);
+        Equal(5, plan.ValidCount);
+        True(File.ReadAllBytes(path).SequenceEqual(beforeParse));
+        Equal(3, service.Data.Todos.Count);
+        Equal("周报", service.Find(report.Id).Title);
+
+        List<AiOperation> confirmed = new List<AiOperation> { plan.Operations[0], plan.Operations[1], plan.Operations[2], plan.Operations[4] };
+        AiUndo undo = service.ApplyAi(confirmed);
+        RoostData applied = new TodoRepository(path).Load();
+        Equal(4, applied.Todos.Count);
+        TodoItem created = applied.Todos.First(delegate(TodoItem item) { return item.Title == "复盘会"; });
+        True(created.IsStarred);
+        Equal("15:00", created.DueTime);
+        TodoItem updated = applied.Todos.First(delegate(TodoItem item) { return item.Id == report.Id; });
+        Equal("周报终稿", updated.Title);
+        Equal("2026-09-25", updated.DueDate);
+        Equal("虚构备注", updated.Notes);
+        True(applied.Todos.First(delegate(TodoItem item) { return item.Id == gym.Id; }).IsCompleted);
+        TodoItem removed = applied.Todos.First(delegate(TodoItem item) { return item.Id == trash.Id; });
+        True(removed.IsDeleted);
+        True(removed.IsStarred);
+
+        service.UndoAi(undo);
+        RoostData restored = new TodoRepository(path).Load();
+        Equal(3, restored.Todos.Count);
+        Equal("周报", restored.Todos.First(delegate(TodoItem item) { return item.Id == report.Id; }).Title);
+        Equal("2026-09-24", restored.Todos.First(delegate(TodoItem item) { return item.Id == report.Id; }).DueDate);
+        False(restored.Todos.First(delegate(TodoItem item) { return item.Id == gym.Id; }).IsCompleted);
+        False(restored.Todos.First(delegate(TodoItem item) { return item.Id == trash.Id; }).IsDeleted);
+    }
+
+    private static string AliasOf(AiRequestContext context, TodoItem item)
+    {
+        foreach (KeyValuePair<string, TodoItem> entry in context.Items)
+            if (entry.Value.Id == item.Id) return entry.Key;
+        throw new Exception("alias not found");
     }
 
     private static int RunStorageWorker(string[] args)
