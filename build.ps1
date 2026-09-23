@@ -45,6 +45,17 @@ $testArguments = @(
 & $compiler $testArguments
 if ($LASTEXITCODE -ne 0) { throw "Roost.Tests 编译失败：$LASTEXITCODE" }
 
+$evalSources = @(Get-ChildItem -LiteralPath (Join-Path $root 'tests\Roost.Eval') -Filter '*.cs' | ForEach-Object FullName)
+$evalArguments = @(
+    '/nologo', '/target:exe', '/optimize+', '/debug-', '/platform:anycpu',
+    "/out:$(Join-Path $bin 'Roost.Eval.exe')",
+    "/reference:$(Join-Path $bin 'Roost.Core.dll')",
+    '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Drawing.dll', '/reference:System.Web.Extensions.dll',
+    '/reference:System.Net.Http.dll'
+) + $evalSources
+& $compiler $evalArguments
+if ($LASTEXITCODE -ne 0) { throw "Roost.Eval 编译失败：$LASTEXITCODE" }
+
 $verifySources = @(Get-ChildItem -LiteralPath (Join-Path $root 'tests\Roost.Verify') -Filter '*.cs' | ForEach-Object FullName)
 $verifyArguments = @(
     '/nologo', '/target:exe', '/optimize+', '/debug-', '/platform:anycpu',

@@ -46,6 +46,8 @@
 - 像素颜色与截图：`.\verify-pixel.ps1`。
 - 指定真实 Windows 缩放门禁：`.\verify-dpi.ps1 -ExpectedScalePercent 100`（另跑 125、150）。
 - 10 分钟资源占用与隐藏暂停：`.\verify-resource.ps1`。
+- AI 改计划流程（本地假模型，不需要 key）：`.\verify-ai.ps1`。
+- AI 评测集（真实模型，需要 key，会产生少量费用）：`.\eval-ai.ps1 -Preset <deepseek|qwen|kimi|zhipu|doubao>`。
 - 全量自动检查：`.\verify-all.ps1`（约 11 分钟）。
 
 真实 100% / 125% / 150% Windows 显示缩放需要按 `docs/PROGRESS.md` 的步骤人工切换后复测；自动脚本不会修改系统显示设置。

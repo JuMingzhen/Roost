@@ -1,0 +1,1076 @@
+{
+ "version": 1,
+ "description": "Roost AI 评测集（PRD 8.6）。全部为虚构数据。",
+ "fixture": {
+  "now": "2026-09-23T10:00:00",
+  "dayStartMinutes": 240,
+  "todos": [
+   {
+    "id": "report",
+    "title": "周报",
+    "dueDate": "2026-09-25",
+    "createdAtUtc": "2026-09-10T01:00:00Z"
+   },
+   {
+    "id": "meeting_product",
+    "title": "产品评审会",
+    "dueDate": "2026-09-24",
+    "dueTime": "10:00",
+    "createdAtUtc": "2026-09-11T01:00:00Z"
+   },
+   {
+    "id": "meeting_weekly",
+    "title": "周会",
+    "dueDate": "2026-09-24",
+    "dueTime": "14:00",
+    "starred": true,
+    "createdAtUtc": "2026-09-12T01:00:00Z"
+   },
+   {
+    "id": "gym",
+    "title": "健身",
+    "createdAtUtc": "2026-09-13T01:00:00Z"
+   },
+   {
+    "id": "rent",
+    "title": "交房租",
+    "dueDate": "2026-09-30",
+    "createdAtUtc": "2026-09-14T01:00:00Z"
+   },
+   {
+    "id": "dentist",
+    "title": "看牙医",
+    "dueDate": "2026-09-26",
+    "dueTime": "09:30",
+    "createdAtUtc": "2026-09-15T01:00:00Z"
+   },
+   {
+    "id": "book",
+    "title": "读完《三体》",
+    "starred": true,
+    "createdAtUtc": "2026-09-16T01:00:00Z"
+   },
+   {
+    "id": "mom",
+    "title": "给妈妈打电话",
+    "dueDate": "2026-09-23",
+    "createdAtUtc": "2026-09-17T01:00:00Z"
+   },
+   {
+    "id": "expense",
+    "title": "报销差旅费",
+    "dueDate": "2026-09-20",
+    "createdAtUtc": "2026-09-18T01:00:00Z"
+   },
+   {
+    "id": "groceries",
+    "title": "买菜",
+    "dueDate": "2026-09-23",
+    "dueTime": "18:00",
+    "createdAtUtc": "2026-09-19T01:00:00Z"
+   },
+   {
+    "id": "parcel",
+    "title": "取快递",
+    "completed": true,
+    "completedAtUtc": "2026-09-22T12:00:00Z",
+    "createdAtUtc": "2026-09-20T01:00:00Z"
+   },
+   {
+    "id": "annual",
+    "title": "年度总结",
+    "completed": true,
+    "completedAtUtc": "2026-09-01T12:00:00Z",
+    "createdAtUtc": "2026-08-01T01:00:00Z"
+   },
+   {
+    "id": "old",
+    "title": "旧任务",
+    "deleted": true,
+    "createdAtUtc": "2026-08-02T01:00:00Z"
+   }
+  ]
+ },
+ "cases": [
+  {
+   "id": "a01",
+   "category": "新增",
+   "input": "明天下午三点有个复盘会，很重要",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "复盘"
+     ],
+     "date": "2026-09-24",
+     "time": "15:00",
+     "starred": true
+    }
+   ]
+  },
+  {
+   "id": "a02",
+   "category": "新增",
+   "input": "后天交季度报告",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "季度报告"
+     ],
+     "date": "2026-09-25",
+     "time": null,
+     "starred": false
+    }
+   ]
+  },
+  {
+   "id": "a03",
+   "category": "新增",
+   "input": "记一下买牙膏",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "牙膏"
+     ],
+     "date": null,
+     "time": null,
+     "starred": false
+    }
+   ]
+  },
+  {
+   "id": "a04",
+   "category": "新增",
+   "input": "下周三上午十点和张三开会",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "张三"
+     ],
+     "date": "2026-09-30",
+     "time": "10:00",
+     "starred": false
+    }
+   ]
+  },
+  {
+   "id": "a05",
+   "category": "新增",
+   "input": "今晚八点给爸爸打电话",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "爸爸"
+     ],
+     "date": "2026-09-23",
+     "time": "20:00",
+     "starred": false
+    }
+   ]
+  },
+  {
+   "id": "a06",
+   "category": "新增",
+   "input": "明早九点去银行",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "银行"
+     ],
+     "date": "2026-09-24",
+     "time": "09:00",
+     "starred": false
+    }
+   ]
+  },
+  {
+   "id": "a07",
+   "category": "新增",
+   "input": "周五之前把合同寄出去",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "合同"
+     ],
+     "date": "2026-09-25",
+     "time": null,
+     "starred": false
+    }
+   ]
+  },
+  {
+   "id": "a08",
+   "category": "新增",
+   "input": "这周六带猫去打疫苗",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "疫苗"
+     ],
+     "date": "2026-09-26",
+     "time": null,
+     "starred": false
+    }
+   ]
+  },
+  {
+   "id": "a09",
+   "category": "新增",
+   "input": "大后天中午和小李吃饭",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "小李"
+     ],
+     "date": "2026-09-26",
+     "time": "12:00",
+     "starred": false
+    }
+   ]
+  },
+  {
+   "id": "a10",
+   "category": "新增",
+   "input": "下个月1号交水电费，很重要",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "水电"
+     ],
+     "date": "2026-10-01",
+     "time": null,
+     "starred": true
+    }
+   ]
+  },
+  {
+   "id": "a11",
+   "category": "新增",
+   "input": "加两件事：明天下午两点剪头发，后天去超市",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "头发"
+     ],
+     "date": "2026-09-24",
+     "time": "14:00",
+     "starred": false
+    },
+    {
+     "op": "add",
+     "title": [
+      "超市"
+     ],
+     "date": "2026-09-25",
+     "time": null,
+     "starred": false
+    }
+   ]
+  },
+  {
+   "id": "a12",
+   "category": "新增",
+   "input": "下周一早上八点半跑步",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "跑步"
+     ],
+     "date": "2026-09-28",
+     "time": "08:30",
+     "starred": false
+    }
+   ]
+  },
+  {
+   "id": "a13",
+   "category": "一天起点",
+   "input": "明天交作业",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "作业"
+     ],
+     "date": "2026-09-23",
+     "time": null,
+     "starred": false
+    }
+   ],
+   "now": "2026-09-23T01:00:00",
+   "note": "凌晨 1 点说明天，指日历上的当天（PRD 8.3）"
+  },
+  {
+   "id": "a14",
+   "category": "一天起点",
+   "input": "今天下午三点开会",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "会"
+     ],
+     "date": "2026-09-22",
+     "time": "15:00",
+     "starred": false
+    }
+   ],
+   "now": "2026-09-23T01:00:00",
+   "note": "按一天起点落在已经过去的时间，预览应警示"
+  },
+  {
+   "id": "a15",
+   "category": "一天起点",
+   "input": "明天买花",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "花"
+     ],
+     "date": "2026-09-23",
+     "time": null,
+     "starred": false
+    }
+   ],
+   "now": "2026-09-23T03:59:00",
+   "note": "PRD 18.2：03:59 时的明天"
+  },
+  {
+   "id": "a16",
+   "category": "一天起点",
+   "input": "明天买花",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "花"
+     ],
+     "date": "2026-09-24",
+     "time": null,
+     "starred": false
+    }
+   ],
+   "now": "2026-09-23T04:00:00",
+   "note": "PRD 18.2：04:00 时的明天"
+  },
+  {
+   "id": "a17",
+   "category": "新增",
+   "input": "提醒我后天晚上七点半看电影",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "电影"
+     ],
+     "date": "2026-09-25",
+     "time": "19:30",
+     "starred": false
+    }
+   ]
+  },
+  {
+   "id": "a18",
+   "category": "新增",
+   "input": "买一本新笔记本，不急",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "笔记本"
+     ],
+     "date": null,
+     "time": null,
+     "starred": false
+    }
+   ]
+  },
+  {
+   "id": "u01",
+   "category": "修改",
+   "input": "把周报改到周五下午五点",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "update",
+     "target": "report",
+     "date": "2026-09-25",
+     "time": "17:00"
+    }
+   ]
+  },
+  {
+   "id": "u02",
+   "category": "修改",
+   "input": "看牙医推迟到下周一上午十点",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "update",
+     "target": "dentist",
+     "date": "2026-09-28",
+     "time": "10:00"
+    }
+   ]
+  },
+  {
+   "id": "u03",
+   "category": "修改",
+   "input": "交房租提前到后天",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "update",
+     "target": "rent",
+     "date": "2026-09-25",
+     "time": null
+    }
+   ]
+  },
+  {
+   "id": "u04",
+   "category": "修改",
+   "input": "把健身改名叫夜跑",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "update",
+     "target": "gym",
+     "title": [
+      "夜跑"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "u05",
+   "category": "修改",
+   "input": "给妈妈打电话改成明天晚上八点",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "update",
+     "target": "mom",
+     "date": "2026-09-24",
+     "time": "20:00"
+    }
+   ]
+  },
+  {
+   "id": "u06",
+   "category": "修改",
+   "input": "买菜的备注写上：要买鸡蛋和牛奶",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "update",
+     "target": "groceries",
+     "notes": [
+      "鸡蛋"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "u07",
+   "category": "修改",
+   "input": "报销差旅费改到下周五",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "update",
+     "target": "expense",
+     "date": "2026-10-02",
+     "time": null
+    }
+   ]
+  },
+  {
+   "id": "u08",
+   "category": "修改",
+   "input": "产品评审会改到明天下午三点",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "update",
+     "target": "meeting_product",
+     "date": "2026-09-24",
+     "time": "15:00"
+    }
+   ]
+  },
+  {
+   "id": "u09",
+   "category": "修改",
+   "input": "周会挪到后天，时间不变",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "update",
+     "target": "meeting_weekly",
+     "date": "2026-09-25",
+     "time": "14:00"
+    }
+   ]
+  },
+  {
+   "id": "u10",
+   "category": "修改",
+   "input": "看牙医不用定具体几点了，还是那天去",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "update",
+     "target": "dentist",
+     "date": "2026-09-26",
+     "time": null
+    }
+   ]
+  },
+  {
+   "id": "c01",
+   "category": "完成",
+   "input": "周报写完了",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "complete",
+     "target": "report"
+    }
+   ]
+  },
+  {
+   "id": "c02",
+   "category": "完成",
+   "input": "健身搞定了",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "complete",
+     "target": "gym"
+    }
+   ]
+  },
+  {
+   "id": "c03",
+   "category": "完成",
+   "input": "牙医看过了",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "complete",
+     "target": "dentist"
+    }
+   ]
+  },
+  {
+   "id": "c04",
+   "category": "完成",
+   "input": "菜买好了",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "complete",
+     "target": "groceries"
+    }
+   ]
+  },
+  {
+   "id": "c05",
+   "category": "完成",
+   "input": "周报和健身都做完了",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "complete",
+     "target": "report"
+    },
+    {
+     "op": "complete",
+     "target": "gym"
+    }
+   ]
+  },
+  {
+   "id": "c06",
+   "category": "完成",
+   "input": "三体读完了！",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "complete",
+     "target": "book"
+    }
+   ]
+  },
+  {
+   "id": "c07",
+   "category": "完成",
+   "input": "房租交了",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "complete",
+     "target": "rent"
+    }
+   ]
+  },
+  {
+   "id": "c08",
+   "category": "完成",
+   "input": "给妈妈打过电话了",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "complete",
+     "target": "mom"
+    }
+   ]
+  },
+  {
+   "id": "c09",
+   "category": "完成",
+   "input": "差旅费已经报销好了",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "complete",
+     "target": "expense"
+    }
+   ]
+  },
+  {
+   "id": "n01",
+   "category": "取消完成",
+   "input": "快递其实还没取到",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "uncomplete",
+     "target": "parcel"
+    }
+   ]
+  },
+  {
+   "id": "n02",
+   "category": "取消完成",
+   "input": "取快递那条标错了，改回没完成",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "uncomplete",
+     "target": "parcel"
+    }
+   ]
+  },
+  {
+   "id": "s01",
+   "category": "星标",
+   "input": "交房租很重要",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "star",
+     "target": "rent"
+    }
+   ]
+  },
+  {
+   "id": "s02",
+   "category": "星标",
+   "input": "三体不急了",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "unstar",
+     "target": "book"
+    }
+   ]
+  },
+  {
+   "id": "s03",
+   "category": "星标",
+   "input": "周会没那么重要了",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "unstar",
+     "target": "meeting_weekly"
+    }
+   ]
+  },
+  {
+   "id": "s04",
+   "category": "星标",
+   "input": "把看牙医标成重要",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "star",
+     "target": "dentist"
+    }
+   ]
+  },
+  {
+   "id": "s05",
+   "category": "星标",
+   "input": "健身挺重要的，标个星",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "star",
+     "target": "gym"
+    }
+   ]
+  },
+  {
+   "id": "d01",
+   "category": "删除",
+   "input": "健身不去了，删掉吧",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "delete",
+     "target": "gym"
+    }
+   ]
+  },
+  {
+   "id": "d02",
+   "category": "删除",
+   "input": "把买菜删了",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "delete",
+     "target": "groceries"
+    }
+   ]
+  },
+  {
+   "id": "d03",
+   "category": "删除",
+   "input": "三体那条不要了",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "delete",
+     "target": "book"
+    }
+   ]
+  },
+  {
+   "id": "d04",
+   "category": "删除",
+   "input": "取消看牙医这件事",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "delete",
+     "target": "dentist"
+    }
+   ]
+  },
+  {
+   "id": "d05",
+   "category": "删除",
+   "input": "删掉报销差旅费",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "delete",
+     "target": "expense"
+    }
+   ]
+  },
+  {
+   "id": "g01",
+   "category": "歧义",
+   "input": "把会改到下午四点",
+   "expect": "ambiguous",
+   "ops": [],
+   "mentions": [
+    "meeting_product",
+    "meeting_weekly"
+   ]
+  },
+  {
+   "id": "g02",
+   "category": "歧义",
+   "input": "那个会取消了",
+   "expect": "ambiguous",
+   "ops": [],
+   "mentions": [
+    "meeting_product",
+    "meeting_weekly"
+   ]
+  },
+  {
+   "id": "g03",
+   "category": "歧义",
+   "input": "会开完了",
+   "expect": "ambiguous",
+   "ops": [],
+   "mentions": [
+    "meeting_product",
+    "meeting_weekly"
+   ],
+   "doneTargets": [
+    "meeting_product",
+    "meeting_weekly"
+   ]
+  },
+  {
+   "id": "g04",
+   "category": "歧义",
+   "input": "明天的会很重要",
+   "expect": "ambiguous",
+   "ops": [],
+   "mentions": [
+    "meeting_product",
+    "meeting_weekly"
+   ]
+  },
+  {
+   "id": "x01",
+   "category": "没听懂",
+   "input": "今天天气怎么样",
+   "expect": "unclear",
+   "ops": []
+  },
+  {
+   "id": "x02",
+   "category": "没听懂",
+   "input": "嗯嗯",
+   "expect": "unclear",
+   "ops": []
+  },
+  {
+   "id": "x03",
+   "category": "没听懂",
+   "input": "帮我写一首关于秋天的诗",
+   "expect": "unclear",
+   "ops": []
+  },
+  {
+   "id": "x04",
+   "category": "没听懂",
+   "input": "asdfghjkl",
+   "expect": "unclear",
+   "ops": []
+  },
+  {
+   "id": "x05",
+   "category": "没听懂",
+   "input": "我今天好累啊",
+   "expect": "unclear",
+   "ops": []
+  },
+  {
+   "id": "e01",
+   "category": "不存在",
+   "input": "体检做完了",
+   "expect": "none",
+   "ops": []
+  },
+  {
+   "id": "e02",
+   "category": "不存在",
+   "input": "把年会删了",
+   "expect": "none",
+   "ops": []
+  },
+  {
+   "id": "e03",
+   "category": "不存在",
+   "input": "把年度总结改到明天",
+   "expect": "none",
+   "ops": [],
+   "note": "一个月前完成的待办不在发送范围内（PRD 8.7）"
+  },
+  {
+   "id": "e04",
+   "category": "不存在",
+   "input": "旧任务标记完成",
+   "expect": "none",
+   "ops": [],
+   "note": "已删除的待办不发送"
+  },
+  {
+   "id": "m01",
+   "category": "组合",
+   "input": "周报写完了，另外明天下午三点加个复盘会，很重要",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "complete",
+     "target": "report"
+    },
+    {
+     "op": "add",
+     "title": [
+      "复盘"
+     ],
+     "date": "2026-09-24",
+     "time": "15:00",
+     "starred": true
+    }
+   ]
+  },
+  {
+   "id": "m02",
+   "category": "组合",
+   "input": "健身删掉，房租改到下周一",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "delete",
+     "target": "gym"
+    },
+    {
+     "op": "update",
+     "target": "rent",
+     "date": "2026-09-28",
+     "time": null
+    }
+   ]
+  },
+  {
+   "id": "m03",
+   "category": "组合",
+   "input": "三体读完了，再加一本《球状闪电》要读",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "complete",
+     "target": "book"
+    },
+    {
+     "op": "add",
+     "title": [
+      "球状闪电"
+     ],
+     "date": null,
+     "time": null,
+     "starred": false
+    }
+   ]
+  },
+  {
+   "id": "m04",
+   "category": "组合",
+   "input": "牙医改到下周三下午两点，并且标成重要",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "update",
+     "target": "dentist",
+     "date": "2026-09-30",
+     "time": "14:00"
+    },
+    {
+     "op": "star",
+     "target": "dentist"
+    }
+   ]
+  },
+  {
+   "id": "m05",
+   "category": "组合",
+   "input": "买菜和给妈妈打电话都完成了，然后把健身删了",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "complete",
+     "target": "groceries"
+    },
+    {
+     "op": "complete",
+     "target": "mom"
+    },
+    {
+     "op": "delete",
+     "target": "gym"
+    }
+   ]
+  },
+  {
+   "id": "t01",
+   "category": "不误伤",
+   "input": "明天下午三点再加一个会：预算会",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "预算"
+     ],
+     "date": "2026-09-24",
+     "time": "15:00",
+     "starred": false
+    }
+   ]
+  },
+  {
+   "id": "t02",
+   "category": "不误伤",
+   "input": "把周报改到下周一，别的都别动",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "update",
+     "target": "report",
+     "date": "2026-09-28",
+     "time": null
+    }
+   ]
+  },
+  {
+   "id": "t03",
+   "category": "不误伤",
+   "input": "我刚想起来还要做周报的PPT",
+   "expect": "ok",
+   "ops": [
+    {
+     "op": "add",
+     "title": [
+      "PPT"
+     ],
+     "date": null,
+     "time": null,
+     "starred": false
+    }
+   ]
+  }
+ ]
+}

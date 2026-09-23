@@ -9,3 +9,7 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ($LASTEXITCODE -ne 0) {
     throw "测试失败：$LASTEXITCODE"
 }
+& (Join-Path $root 'bin\Roost.Eval.exe') --self-test (Join-Path $root 'tests\ai-eval\cases.json')
+if ($LASTEXITCODE -ne 0) {
+    throw "AI 评测集自检失败：$LASTEXITCODE"
+}
