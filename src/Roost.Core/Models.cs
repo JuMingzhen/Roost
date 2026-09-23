@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Web.Script.Serialization;
 
 namespace Roost.Core
 {
@@ -46,6 +47,17 @@ namespace Roost.Core
         public int DayStartMinutes { get; set; }
         public bool FirstRunCompleted { get; set; }
         public string ToggleHotKey { get; set; }
+        public string TalkHotKey { get; set; }
+        public string AiPresetId { get; set; }
+        public string AiBaseUrl { get; set; }
+        public string AiModel { get; set; }
+        public bool AiPrivacyAcknowledged { get; set; }
+
+        [ScriptIgnore]
+        public bool AiConfigured
+        {
+            get { return !string.IsNullOrWhiteSpace(AiBaseUrl) && !string.IsNullOrWhiteSpace(AiModel); }
+        }
 
         public RoostSettings()
         {
@@ -55,6 +67,7 @@ namespace Roost.Core
             Opacity = 1.0;
             DayStartMinutes = 4 * 60;
             ToggleHotKey = "Ctrl+Alt+H";
+            TalkHotKey = "Ctrl+Alt+Space";
         }
     }
 

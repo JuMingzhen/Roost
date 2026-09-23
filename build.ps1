@@ -17,7 +17,8 @@ $coreSources = @(Get-ChildItem -LiteralPath (Join-Path $root 'src\Roost.Core') -
 $coreArguments = @(
     '/nologo', '/target:library', '/optimize+', '/debug-', '/platform:anycpu',
     "/out:$(Join-Path $bin 'Roost.Core.dll')",
-    '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Drawing.dll', '/reference:System.Web.Extensions.dll'
+    '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Drawing.dll', '/reference:System.Web.Extensions.dll',
+    '/reference:System.Net.Http.dll'
 ) + $coreSources
 & $compiler $coreArguments
 if ($LASTEXITCODE -ne 0) { throw "Roost.Core 编译失败：$LASTEXITCODE" }
@@ -28,7 +29,7 @@ $appArguments = @(
     "/out:$(Join-Path $dist 'Roost.exe')",
     "/reference:$(Join-Path $bin 'Roost.Core.dll')",
     '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Drawing.dll',
-    '/reference:System.Windows.Forms.dll', '/reference:System.Web.Extensions.dll'
+    '/reference:System.Windows.Forms.dll', '/reference:System.Web.Extensions.dll', '/reference:System.Net.Http.dll'
 ) + $appSources
 & $compiler $appArguments
 if ($LASTEXITCODE -ne 0) { throw "Roost.App 编译失败：$LASTEXITCODE" }
@@ -38,7 +39,8 @@ $testArguments = @(
     '/nologo', '/target:exe', '/optimize+', '/debug-', '/platform:anycpu',
     "/out:$(Join-Path $bin 'Roost.Tests.exe')",
     "/reference:$(Join-Path $bin 'Roost.Core.dll')",
-    '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Drawing.dll', '/reference:System.Web.Extensions.dll'
+    '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Drawing.dll', '/reference:System.Web.Extensions.dll',
+    '/reference:System.Net.Http.dll'
 ) + $testSources
 & $compiler $testArguments
 if ($LASTEXITCODE -ne 0) { throw "Roost.Tests 编译失败：$LASTEXITCODE" }
@@ -50,7 +52,7 @@ $verifyArguments = @(
     "/reference:$(Join-Path $dist 'Roost.exe')",
     "/reference:$(Join-Path $bin 'Roost.Core.dll')",
     '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Drawing.dll',
-    '/reference:System.Windows.Forms.dll', '/reference:System.Web.Extensions.dll'
+    '/reference:System.Windows.Forms.dll', '/reference:System.Web.Extensions.dll', '/reference:System.Net.Http.dll'
 ) + $verifySources
 & $compiler $verifyArguments
 if ($LASTEXITCODE -ne 0) { throw "Roost.Verify 编译失败：$LASTEXITCODE" }

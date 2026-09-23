@@ -4,8 +4,11 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using Roost.Core;
 
 internal static class TestRunner
@@ -35,6 +38,10 @@ internal static class TestRunner
         Run("AI 回复解析为预览操作", TestAiParseOperations);
         Run("AI 无效操作、没听懂和有歧义", TestAiParseRejections);
         Run("AI 预览不改动数据，确认后整批生效并可整批撤销", TestAiApplyAndUndo);
+        Run("AI 请求格式与成功回复", TestAiClientSuccess);
+        Run("AI 失败分类：key 无效、模型错误、限流、服务错误", TestAiClientStatusErrors);
+        Run("AI 超时、取消与断网", TestAiClientTimeoutCancelNetwork);
+        Run("API Key 写入 Windows 凭据管理器且不落盘", TestCredentialStore);
 
         Console.WriteLine("RESULT passed={0} failed={1}", passed, failed);
         return failed == 0 ? 0 : 1;
@@ -375,6 +382,195 @@ internal static class TestRunner
         Equal("2026-09-24", restored.Todos.First(delegate(TodoItem item) { return item.Id == report.Id; }).DueDate);
         False(restored.Todos.First(delegate(TodoItem item) { return item.Id == gym.Id; }).IsCompleted);
         False(restored.Todos.First(delegate(TodoItem item) { return item.Id == trash.Id; }).IsDeleted);
+    }
+
+    private static void TestAiClientSuccess()
+    {
+        const string key = "sk-test-FAKE-0000";
+        FakeServer server = FakeServer.Start(200, "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"status\\\":\\\"unclear\\\"}\"}}]}", 0);
+        AiEndpoint endpoint = new AiEndpoint { BaseUrl = server.BaseUrl + "/v1/", Model = "fake-model", ApiKey = key };
+        string content = new AiClient().CompleteAsync(endpoint, "系统", "明天开会", 512, CancellationToken.None).GetAwaiter().GetResult();
+        Equal("{\"status\":\"unclear\"}", content);
+        string request = server.WaitRequest();
+        True(request.StartsWith("POST /v1/chat/completions "));
+        True(request.Contains("Authorization: Bearer " + key));
+        True(request.Contains("\"model\":\"fake-model\""));
+        True(request.Contains("\"temperature\":0"));
+        True(request.Contains("明天开会"));
+        Equal("https://x.example/v1/chat/completions", new AiEndpoint { BaseUrl = "https://x.example/v1/chat/completions/" }.ChatCompletionsUrl);
+    }
+
+    private static void TestAiClientStatusErrors()
+    {
+        const string key = "sk-test-FAKE-0000";
+        ExpectFailure(401, "{\"error\":{\"message\":\"Incorrect API key provided: " + key + "\"}}", AiFailureKind.InvalidKey, key);
+        ExpectFailure(403, "{}", AiFailureKind.InvalidKey, key);
+        ExpectFailure(404, "{\"error\":{\"message\":\"model not found\"}}", AiFailureKind.NotFound, key);
+        ExpectFailure(400, "{\"error\":{\"message\":\"Model Not Exist\"}}", AiFailureKind.Rejected, key);
+        ExpectFailure(402, "{\"error\":{\"message\":\"Insufficient Balance\"}}", AiFailureKind.Quota, key);
+        ExpectFailure(429, "{\"error\":\"rate limited\"}", AiFailureKind.RateLimited, key);
+        ExpectFailure(503, "upstream down", AiFailureKind.Server, key);
+        ExpectFailure(200, "<html>not json</html>", AiFailureKind.BadResponse, key);
+    }
+
+    private static void TestAiClientTimeoutCancelNetwork()
+    {
+        AiClient fast = new AiClient(TimeSpan.FromMilliseconds(400));
+        FakeServer slow = FakeServer.Start(200, "{}", 3000);
+        AiException timeout = Catch(delegate
+        {
+            fast.CompleteAsync(new AiEndpoint { BaseUrl = slow.BaseUrl, Model = "m", ApiKey = "k" }, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult();
+        });
+        Equal(AiFailureKind.Timeout, timeout.Kind);
+        True(timeout.Retryable);
+
+        FakeServer slowAgain = FakeServer.Start(200, "{}", 3000);
+        CancellationTokenSource cancel = new CancellationTokenSource(150);
+        AiException cancelled = Catch(delegate
+        {
+            new AiClient().CompleteAsync(new AiEndpoint { BaseUrl = slowAgain.BaseUrl, Model = "m", ApiKey = "k" }, "s", "u", 16, cancel.Token).GetAwaiter().GetResult();
+        });
+        Equal(AiFailureKind.Cancelled, cancelled.Kind);
+
+        TcpListener closed = new TcpListener(IPAddress.Loopback, 0);
+        closed.Start();
+        int port = ((IPEndPoint)closed.LocalEndpoint).Port;
+        closed.Stop();
+        AiException network = Catch(delegate
+        {
+            new AiClient().CompleteAsync(new AiEndpoint { BaseUrl = "http://127.0.0.1:" + port, Model = "m", ApiKey = "k" }, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult();
+        });
+        Equal(AiFailureKind.Network, network.Kind);
+        Equal(AiFailureKind.NotFound, Catch(delegate
+        {
+            new AiClient().CompleteAsync(new AiEndpoint { BaseUrl = "not a url", Model = "m", ApiKey = "k" }, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult();
+        }).Kind);
+    }
+
+    private static void TestCredentialStore()
+    {
+        string target = "Roost/Test/" + Guid.NewGuid().ToString("N");
+        const string secret = "sk-test-FAKE-凭据-1234";
+        try
+        {
+            True(CredentialStore.Read(target) == null);
+            CredentialStore.Write(target, secret);
+            Equal(secret, CredentialStore.Read(target));
+            CredentialStore.Write(target, secret + "-v2");
+            Equal(secret + "-v2", CredentialStore.Read(target));
+        }
+        finally
+        {
+            CredentialStore.Delete(target);
+        }
+        True(CredentialStore.Read(target) == null);
+        CredentialStore.Delete(target);
+
+        string root = NewTestDirectory();
+        TodoService service = new TodoService(new TodoRepository(Path.Combine(root, "data.json")));
+        service.Data.Settings.AiPresetId = "deepseek";
+        service.Data.Settings.AiBaseUrl = "https://api.deepseek.com/v1";
+        service.Data.Settings.AiModel = "deepseek-flash";
+        service.SaveSettings();
+        foreach (string file in Directory.GetFiles(root, "*", SearchOption.AllDirectories))
+        {
+            string text = File.ReadAllText(file);
+            False(text.Contains("sk-"));
+            False(text.Contains("AiConfigured"));
+        }
+        True(new TodoRepository(Path.Combine(root, "data.json")).Load().Settings.AiConfigured);
+    }
+
+    private static void ExpectFailure(int status, string body, AiFailureKind kind, string key)
+    {
+        FakeServer server = FakeServer.Start(status, body, 0);
+        AiException failure = Catch(delegate
+        {
+            new AiClient().CompleteAsync(new AiEndpoint { BaseUrl = server.BaseUrl, Model = "m", ApiKey = key }, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult();
+        });
+        if (failure.Kind != kind) throw new Exception(string.Format("status {0}: expected {1}, actual {2}", status, kind, failure.Kind));
+        False(failure.Message.Contains(key));
+    }
+
+    private static AiException Catch(Action action)
+    {
+        try { action(); }
+        catch (AiException exception) { return exception; }
+        throw new Exception("expected AiException");
+    }
+
+    private sealed class FakeServer
+    {
+        private readonly TcpListener listener;
+        private readonly Task<string> handler;
+
+        internal string BaseUrl { get; private set; }
+
+        private FakeServer(int status, string body, int delayMilliseconds)
+        {
+            listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            BaseUrl = "http://127.0.0.1:" + ((IPEndPoint)listener.LocalEndpoint).Port;
+            handler = Task.Run(delegate { return Serve(status, body, delayMilliseconds); });
+        }
+
+        internal static FakeServer Start(int status, string body, int delayMilliseconds)
+        {
+            return new FakeServer(status, body, delayMilliseconds);
+        }
+
+        internal string WaitRequest()
+        {
+            return handler.GetAwaiter().GetResult();
+        }
+
+        private string Serve(int status, string body, int delayMilliseconds)
+        {
+            try
+            {
+                using (TcpClient client = listener.AcceptTcpClient())
+                using (NetworkStream stream = client.GetStream())
+                {
+                    MemoryStream received = new MemoryStream();
+                    byte[] buffer = new byte[8192];
+                    int headerEnd = -1, contentLength = 0;
+                    while (true)
+                    {
+                        int read = stream.Read(buffer, 0, buffer.Length);
+                        if (read <= 0) break;
+                        received.Write(buffer, 0, read);
+                        string sofar = Encoding.UTF8.GetString(received.ToArray());
+                        if (headerEnd < 0)
+                        {
+                            headerEnd = sofar.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+                            if (headerEnd >= 0)
+                            {
+                                foreach (string line in sofar.Substring(0, headerEnd).Split(new[] { "\r\n" }, StringSplitOptions.None))
+                                    if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
+                                        contentLength = int.Parse(line.Substring(15).Trim());
+                            }
+                        }
+                        if (headerEnd >= 0 && received.Length >= Encoding.UTF8.GetByteCount(sofar.Substring(0, headerEnd + 4)) + contentLength) break;
+                    }
+                    string request = Encoding.UTF8.GetString(received.ToArray());
+                    if (delayMilliseconds > 0) Thread.Sleep(delayMilliseconds);
+                    byte[] payload = Encoding.UTF8.GetBytes(body);
+                    string head = string.Format("HTTP/1.1 {0} X\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {1}\r\nConnection: close\r\n\r\n", status, payload.Length);
+                    try
+                    {
+                        byte[] headBytes = Encoding.ASCII.GetBytes(head);
+                        stream.Write(headBytes, 0, headBytes.Length);
+                        stream.Write(payload, 0, payload.Length);
+                    }
+                    catch (IOException) { }
+                    return request;
+                }
+            }
+            finally
+            {
+                listener.Stop();
+            }
+        }
     }
 
     private static string AliasOf(AiRequestContext context, TodoItem item)
