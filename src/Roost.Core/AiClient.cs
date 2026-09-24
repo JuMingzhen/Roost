@@ -105,33 +105,49 @@ namespace Roost.Core
 
             using (CancellationTokenSource timer = new CancellationTokenSource(timeout))
             using (CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, timer.Token))
-            using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, uri))
             {
-                request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + (endpoint.ApiKey ?? string.Empty).Trim());
-                request.Content = new StringContent(serializer.Serialize(body), Encoding.UTF8, "application/json");
-                string text;
-                HttpStatusCode status;
-                try
+                while (true)
                 {
-                    using (HttpResponseMessage response = await Http.SendAsync(request, linked.Token).ConfigureAwait(false))
+                    HttpStatusCode status;
+                    string text;
+                    try
                     {
-                        status = response.StatusCode;
-                        text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                        using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, uri))
+                        {
+                            request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + (endpoint.ApiKey ?? string.Empty).Trim());
+                            request.Content = new StringContent(serializer.Serialize(body), Encoding.UTF8, "application/json");
+                            using (HttpResponseMessage response = await Http.SendAsync(request, linked.Token).ConfigureAwait(false))
+                            {
+                                status = response.StatusCode;
+                                text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                            }
+                        }
                     }
-                }
-                catch (OperationCanceledException)
-                {
-                    if (cancellation.IsCancellationRequested) throw new AiException(AiFailureKind.Cancelled, "已取消。");
-                    throw new AiException(AiFailureKind.Timeout, string.Format("模型服务 {0} 秒内没有回应，请稍后重试。", (int)timeout.TotalSeconds));
-                }
-                catch (HttpRequestException)
-                {
-                    throw new AiException(AiFailureKind.Network, "连不上模型服务，请检查网络后重试。");
-                }
+                    catch (OperationCanceledException)
+                    {
+                        if (cancellation.IsCancellationRequested) throw new AiException(AiFailureKind.Cancelled, "已取消。");
+                        throw new AiException(AiFailureKind.Timeout, string.Format("模型服务 {0} 秒内没有回应，请稍后重试。", (int)timeout.TotalSeconds));
+                    }
+                    catch (HttpRequestException)
+                    {
+                        throw new AiException(AiFailureKind.Network, "连不上模型服务，请检查网络后重试。");
+                    }
 
-                if ((int)status < 200 || (int)status >= 300) throw FromStatus(status, text, serializer);
-                return ReadContent(text, serializer);
+                    // 部分模型只接受自己的默认 temperature（如 kimi-k2.6 只接受 1）：被明确拒绝时去掉该参数重试一次。
+                    if (status == HttpStatusCode.BadRequest && body.ContainsKey("temperature") && RejectsTemperature(text))
+                    {
+                        body.Remove("temperature");
+                        continue;
+                    }
+                    if ((int)status < 200 || (int)status >= 300) throw FromStatus(status, text, serializer);
+                    return ReadContent(text, serializer);
+                }
             }
+        }
+
+        private static bool RejectsTemperature(string body)
+        {
+            return body != null && body.IndexOf("temperature", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         public Task<string> CheckAsync(AiEndpoint endpoint, CancellationToken cancellation)

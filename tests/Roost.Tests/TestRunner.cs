@@ -41,6 +41,7 @@ internal static class TestRunner
         Run("AI 请求格式与成功回复", TestAiClientSuccess);
         Run("AI 失败分类：key 无效、模型错误、限流、服务错误", TestAiClientStatusErrors);
         Run("AI 超时、取消与断网", TestAiClientTimeoutCancelNetwork);
+        Run("AI 模型拒绝 temperature 时去掉该参数重试一次", TestAiClientTemperatureFallback);
         Run("API Key 写入 Windows 凭据管理器且不落盘", TestCredentialStore);
 
         Console.WriteLine("RESULT passed={0} failed={1}", passed, failed);
@@ -471,6 +472,37 @@ internal static class TestRunner
         }).Kind);
     }
 
+    private static void TestAiClientTemperatureFallback()
+    {
+        const string rejected = "{\"error\":{\"message\":\"invalid temperature: only 1 is allowed for this model\",\"type\":\"invalid_request_error\"}}";
+        const string ok = "{\"choices\":[{\"message\":{\"content\":\"好的\"}}]}";
+
+        FakeServer fallback = FakeServer.Start(new[] { 400, 200 }, new[] { rejected, ok });
+        AiEndpoint endpoint = new AiEndpoint { BaseUrl = fallback.BaseUrl, Model = "kimi-k2.6", ApiKey = "k" };
+        Equal("好的", new AiClient().CompleteAsync(endpoint, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult());
+        List<string> requests = fallback.WaitRequests();
+        Equal(2, requests.Count);
+        True(requests[0].Contains("\"temperature\":0"));
+        False(requests[1].Contains("temperature"));
+        True(requests[1].Contains("\"model\":\"kimi-k2.6\""));
+
+        FakeServer twice = FakeServer.Start(new[] { 400, 400, 200 }, new[] { rejected, rejected, ok });
+        endpoint.BaseUrl = twice.BaseUrl;
+        Equal(AiFailureKind.Rejected, Catch(delegate
+        {
+            new AiClient().CompleteAsync(endpoint, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult();
+        }).Kind);
+        Equal(2, twice.WaitRequests().Count);
+
+        FakeServer unrelated = FakeServer.Start(new[] { 400, 200 }, new[] { "{\"error\":{\"message\":\"Model Not Exist\"}}", ok });
+        endpoint.BaseUrl = unrelated.BaseUrl;
+        Equal(AiFailureKind.Rejected, Catch(delegate
+        {
+            new AiClient().CompleteAsync(endpoint, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult();
+        }).Kind);
+        Equal(1, unrelated.WaitRequests().Count);
+    }
+
     private static void TestCredentialStore()
     {
         string target = "Roost/Test/" + Guid.NewGuid().ToString("N");
@@ -526,73 +558,95 @@ internal static class TestRunner
     private sealed class FakeServer
     {
         private readonly TcpListener listener;
-        private readonly Task<string> handler;
+        private readonly Task<List<string>> handler;
 
         internal string BaseUrl { get; private set; }
 
-        private FakeServer(int status, string body, int delayMilliseconds)
+        private FakeServer(int[] statuses, string[] bodies, int delayMilliseconds)
         {
             listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
             BaseUrl = "http://127.0.0.1:" + ((IPEndPoint)listener.LocalEndpoint).Port;
-            handler = Task.Run(delegate { return Serve(status, body, delayMilliseconds); });
+            handler = Task.Run(delegate { return ServeAll(statuses, bodies, delayMilliseconds); });
         }
 
         internal static FakeServer Start(int status, string body, int delayMilliseconds)
         {
-            return new FakeServer(status, body, delayMilliseconds);
+            return new FakeServer(new[] { status }, new[] { body }, delayMilliseconds);
+        }
+
+        internal static FakeServer Start(int[] statuses, string[] bodies)
+        {
+            return new FakeServer(statuses, bodies, 0);
         }
 
         internal string WaitRequest()
         {
+            return handler.GetAwaiter().GetResult()[0];
+        }
+
+        // 按顺序应答；客户端不再发请求时（等待 2 秒无连接）提前结束。
+        internal List<string> WaitRequests()
+        {
             return handler.GetAwaiter().GetResult();
         }
 
-        private string Serve(int status, string body, int delayMilliseconds)
+        private List<string> ServeAll(int[] statuses, string[] bodies, int delayMilliseconds)
         {
+            List<string> requests = new List<string>();
             try
             {
-                using (TcpClient client = listener.AcceptTcpClient())
-                using (NetworkStream stream = client.GetStream())
+                for (int index = 0; index < statuses.Length; index++)
                 {
-                    MemoryStream received = new MemoryStream();
-                    byte[] buffer = new byte[8192];
-                    int headerEnd = -1, contentLength = 0;
-                    while (true)
-                    {
-                        int read = stream.Read(buffer, 0, buffer.Length);
-                        if (read <= 0) break;
-                        received.Write(buffer, 0, read);
-                        string sofar = Encoding.UTF8.GetString(received.ToArray());
-                        if (headerEnd < 0)
-                        {
-                            headerEnd = sofar.IndexOf("\r\n\r\n", StringComparison.Ordinal);
-                            if (headerEnd >= 0)
-                            {
-                                foreach (string line in sofar.Substring(0, headerEnd).Split(new[] { "\r\n" }, StringSplitOptions.None))
-                                    if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
-                                        contentLength = int.Parse(line.Substring(15).Trim());
-                            }
-                        }
-                        if (headerEnd >= 0 && received.Length >= Encoding.UTF8.GetByteCount(sofar.Substring(0, headerEnd + 4)) + contentLength) break;
-                    }
-                    string request = Encoding.UTF8.GetString(received.ToArray());
-                    if (delayMilliseconds > 0) Thread.Sleep(delayMilliseconds);
-                    byte[] payload = Encoding.UTF8.GetBytes(body);
-                    string head = string.Format("HTTP/1.1 {0} X\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {1}\r\nConnection: close\r\n\r\n", status, payload.Length);
-                    try
-                    {
-                        byte[] headBytes = Encoding.ASCII.GetBytes(head);
-                        stream.Write(headBytes, 0, headBytes.Length);
-                        stream.Write(payload, 0, payload.Length);
-                    }
-                    catch (IOException) { }
-                    return request;
+                    if (index > 0 && !listener.Server.Poll(2000000, SelectMode.SelectRead)) break;
+                    requests.Add(Serve(statuses[index], bodies[index], delayMilliseconds));
                 }
             }
             finally
             {
                 listener.Stop();
+            }
+            return requests;
+        }
+
+        private string Serve(int status, string body, int delayMilliseconds)
+        {
+            using (TcpClient client = listener.AcceptTcpClient())
+            using (NetworkStream stream = client.GetStream())
+            {
+                MemoryStream received = new MemoryStream();
+                byte[] buffer = new byte[8192];
+                int headerEnd = -1, contentLength = 0;
+                while (true)
+                {
+                    int read = stream.Read(buffer, 0, buffer.Length);
+                    if (read <= 0) break;
+                    received.Write(buffer, 0, read);
+                    string sofar = Encoding.UTF8.GetString(received.ToArray());
+                    if (headerEnd < 0)
+                    {
+                        headerEnd = sofar.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+                        if (headerEnd >= 0)
+                        {
+                            foreach (string line in sofar.Substring(0, headerEnd).Split(new[] { "\r\n" }, StringSplitOptions.None))
+                                if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
+                                    contentLength = int.Parse(line.Substring(15).Trim());
+                        }
+                    }
+                    if (headerEnd >= 0 && received.Length >= Encoding.UTF8.GetByteCount(sofar.Substring(0, headerEnd + 4)) + contentLength) break;
+                }
+                string request = Encoding.UTF8.GetString(received.ToArray());
+                if (delayMilliseconds > 0) Thread.Sleep(delayMilliseconds);
+                byte[] payload = Encoding.UTF8.GetBytes(body);
+                string head = string.Format("HTTP/1.1 {0} X\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {1}\r\nConnection: close\r\n\r\n", status, payload.Length);
+                try
+                {
+                    byte[] headBytes = Encoding.ASCII.GetBytes(head);
+                    stream.Write(headBytes, 0, headBytes.Length);
+                    stream.Write(payload, 0, payload.Length);
+                }
+                catch (IOException) { }
+                return request;
             }
         }
     }
