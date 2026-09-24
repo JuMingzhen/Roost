@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Drawing;
+using System.IO;
 using System.Threading;
 using System.Windows.Forms;
 using Roost.Core;
@@ -24,6 +25,7 @@ namespace Roost.App
         private readonly Label keyHint;
         private readonly Button checkButton;
         private readonly Button clearButton;
+        private readonly Button selfTestButton;
         private readonly Label aiStatus;
         private CancellationTokenSource checking;
 
@@ -94,8 +96,11 @@ namespace Roost.App
             checkButton.Click += delegate { SaveAi(); };
             clearButton = new Button { Text = "清除 AI 配置", Location = new Point(240, 228), Size = new Size(120, 34) };
             clearButton.Click += delegate { ClearAi(); };
+            selfTestButton = new Button { Text = "用测试题检验…", Location = new Point(370, 228), Size = new Size(120, 34) };
+            selfTestButton.Click += delegate { OpenSelfTest(); };
             aiPage.Controls.Add(checkButton);
             aiPage.Controls.Add(clearButton);
+            aiPage.Controls.Add(selfTestButton);
             aiStatus = new Label { Location = new Point(24, 272), Size = new Size(460, 44) };
             aiPage.Controls.Add(aiStatus);
             aiPage.Controls.Add(new Label { Text = "key 只保存在 Windows 凭据管理器里。不配置模型也能完整使用本地待办。", Location = new Point(24, 320), Size = new Size(460, 20), ForeColor = Color.DimGray });
@@ -158,6 +163,31 @@ namespace Roost.App
             try { saved = CredentialStore.Read(CredentialStore.ApiKeyTarget); }
             catch (System.ComponentModel.Win32Exception) { }
             keyHint.Text = string.IsNullOrEmpty(saved) ? "尚未保存 key。" : "已保存 key；留空则继续使用已保存的 key。";
+            selfTestButton.Enabled = settings.AiConfigured && !string.IsNullOrEmpty(saved);
+        }
+
+        private void OpenSelfTest()
+        {
+            string key = null;
+            try { key = CredentialStore.Read(CredentialStore.ApiKeyTarget); }
+            catch (System.ComponentModel.Win32Exception) { }
+            if (!settings.AiConfigured || string.IsNullOrEmpty(key))
+            {
+                ShowAiStatus("请先保存模型配置，再用测试题检验。", Color.Firebrick);
+                return;
+            }
+            AiEndpoint endpoint = new AiEndpoint { BaseUrl = settings.AiBaseUrl, Model = settings.AiModel, ApiKey = key };
+            AiSelfTestForm test;
+            try
+            {
+                test = new AiSelfTestForm(endpoint, AiSelfTestForm.SuitePath);
+            }
+            catch (IOException)
+            {
+                ShowAiStatus("找不到测试题文件，请确认应用文件完整。", Color.Firebrick);
+                return;
+            }
+            using (test) test.ShowDialog(this);
         }
 
         private async void SaveAi()
@@ -232,7 +262,7 @@ namespace Roost.App
             settings.AiPrivacyAcknowledged = true;
             keyBox.Text = string.Empty;
             UpdateKeyHint();
-            ShowAiStatus(failure == null ? "✓ 检测通过，已保存。" : "已保存，但尚未通过检测。", failure == null ? Color.SeaGreen : Color.DarkOrange);
+            ShowAiStatus(failure == null ? "✓ 检测通过，已保存。可以点「用测试题检验」看看它改计划靠不靠谱。" : "已保存，但尚未通过检测。", failure == null ? Color.SeaGreen : Color.DarkOrange);
             EventHandler handler = SettingsSaved;
             if (handler != null) handler(this, EventArgs.Empty);
         }

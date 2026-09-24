@@ -402,8 +402,29 @@ internal static class VerificationRunner
             bool notConfigured = notConfiguredMessage != null && notConfiguredMessage.Contains("还没有配置模型") &&
                                  notConfiguredMessage.Contains("不配置也能正常使用本地待办") && server.RequestCount == requestsBefore;
 
+            // 4. 模型测试题（PRD 9.6）：只发虚构待办，跑完给出得分。
+            service.Create("私人待办-甲乙丙", null, null, null, false);
+            int requestsBeforeTest = server.RequestCount;
+            AiSelfTestForm test = new AiSelfTestForm(
+                new AiEndpoint { BaseUrl = server.BaseUrl + "/v1", Model = "fake-model", ApiKey = "sk-verify-FAKE" },
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "ai-eval", "cases.json"));
+            for (int i = 0; i < test.QuestionCountForTest; i++) server.Enqueue(200, ChatBody("{\"status\":\"unclear\",\"message\":\"不明白\"}"), 0);
+            test.Show();
+            EnsureSyncContext();
+            test.StartForTest();
+            WaitUntil(delegate { return !test.RunningForTest; }, 30000);
+            string testSummary = test.SummaryForTest;
+            List<string> testRequests = server.RequestsSince(requestsBeforeTest);
+            bool modelTest = test.QuestionCountForTest >= 12 && testRequests.Count == test.QuestionCountForTest &&
+                             testSummary.StartsWith("答对 3 / " + test.QuestionCountForTest + " 题") && !testSummary.Contains("⚠") &&
+                             test.DetailsForTest.Contains("你说：周报写完了") &&
+                             !testRequests.Exists(delegate(string request) { return request.Contains("私人待办-甲乙丙"); });
+            if (!modelTest)
+                Console.Error.WriteLine("Model test: questions={0} requests={1} summary={2}", test.QuestionCountForTest, testRequests.Count, testSummary);
+            test.Close();
+
             bool pass = thinkingShown && deleteListedFirst && cancelKeepsData && requestCarriesContext && confirmApplies && undoRestores &&
-                        invalidKey && unclear && ambiguous && serverDown && cancelRequest && failuresKeepData && notConfigured;
+                        invalidKey && unclear && ambiguous && serverDown && cancelRequest && failuresKeepData && notConfigured && modelTest;
             result["thinkingAnimationWhileWaiting"] = thinkingShown;
             result["deleteListedFirstInPreview"] = deleteListedFirst;
             result["previewAndCancelLeaveDataUnchanged"] = cancelKeepsData;
@@ -417,6 +438,7 @@ internal static class VerificationRunner
             result["userCancelKeepsInput"] = cancelRequest;
             result["failuresLeaveDataUnchanged"] = failuresKeepData;
             result["notConfiguredGuidesToSettings"] = notConfigured;
+            result["modelTestRunsOnFictionalTodosOnly"] = modelTest;
             result["overallPass"] = pass;
             result["status"] = pass ? "PASS" : "FAIL";
             WriteJson(outputPath, result);
@@ -445,11 +467,16 @@ internal static class VerificationRunner
 
     private static void Talk(PetForm pet, string sentence)
     {
+        EnsureSyncContext();
+        pet.SendTalkForTest(sentence);
+    }
+
+    private static void EnsureSyncContext()
+    {
         // 验证器没有 Application.Run 主循环：模态预览关闭后 WinForms 会卸载同步上下文，
         // 下一次 await 的后续代码就会跑到线程池上。真实应用有主循环，不受影响。
         if (!(SynchronizationContext.Current is WindowsFormsSynchronizationContext))
             SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
-        pet.SendTalkForTest(sentence);
     }
 
     private static string ChatBody(string content)
@@ -586,6 +613,7 @@ internal sealed class ScriptedModelServer
 {
     private readonly TcpListener listener;
     private readonly Queue<object[]> script = new Queue<object[]>();
+    private readonly List<string> requests = new List<string>();
     private readonly Thread worker;
     private volatile bool stopping;
     private int requestCount;
@@ -594,6 +622,11 @@ internal sealed class ScriptedModelServer
     internal string BaseUrl { get; private set; }
     internal int RequestCount { get { return Thread.VolatileRead(ref requestCount); } }
     internal string LastRequest { get { lock (script) return lastRequest; } }
+
+    internal List<string> RequestsSince(int index)
+    {
+        lock (script) return requests.GetRange(index, requests.Count - index);
+    }
 
     internal ScriptedModelServer()
     {
@@ -633,6 +666,7 @@ internal sealed class ScriptedModelServer
                     lock (script)
                     {
                         lastRequest = request;
+                        requests.Add(request);
                         entry = script.Count > 0 ? script.Dequeue() : new object[] { 500, "no script", 0 };
                     }
                     Interlocked.Increment(ref requestCount);
