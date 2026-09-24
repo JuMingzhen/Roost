@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('deepseek', 'qwen', 'kimi', 'zhipu', 'doubao', 'custom')]
+    [ValidateSet('deepseek', 'qwen', 'zhipu', 'doubao', 'custom')]
     [string]$Preset,
     [string]$Model = '',
     [string]$BaseUrl = '',
