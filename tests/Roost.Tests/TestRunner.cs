@@ -43,6 +43,8 @@ internal static class TestRunner
         Run("AI 超时、取消与断网", TestAiClientTimeoutCancelNetwork);
         Run("AI 模型拒绝 temperature 时去掉该参数重试一次", TestAiClientTemperatureFallback);
         Run("API Key 写入 Windows 凭据管理器且不落盘", TestCredentialStore);
+        Run("模型测试题：覆盖三类致命错误，只用虚构待办", TestModelTestCoverage);
+        Run("模型测试题：判出致命错误、重试一次、可取消、key 错误中止", TestModelTestRun);
 
         Console.WriteLine("RESULT passed={0} failed={1}", passed, failed);
         return failed == 0 ? 0 : 1;
@@ -501,6 +503,87 @@ internal static class TestRunner
             new AiClient().CompleteAsync(endpoint, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult();
         }).Kind);
         Equal(1, unrelated.WaitRequests().Count);
+    }
+
+    private static AiEvalSuite LoadSuite()
+    {
+        return AiEvalSuite.Load(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "assets", "ai-eval", "cases.json"));
+    }
+
+    private static void TestModelTestCoverage()
+    {
+        AiEvalSuite suite = LoadSuite();
+        List<AiEvalCase> cases = suite.SelfTestCases();
+        True(cases.Count >= 12 && cases.Count <= 20);
+        HashSet<string> categories = new HashSet<string>(cases.Select(delegate(AiEvalCase item) { return item.Category; }));
+        foreach (string category in new[] { "新增", "修改", "完成", "删除", "歧义", "没听懂", "不存在", "不误伤" })
+            if (!categories.Contains(category)) throw new Exception("模型测试题缺少类别：" + category);
+        True(cases.Count(delegate(AiEvalCase item) { return item.Input.Contains("完"); }) >= 2);
+        True(cases.Count(delegate(AiEvalCase item) { return item.Category == "不存在"; }) >= 2);
+
+        HashSet<string> fixtureTitles = new HashSet<string>(suite.BuildTodos().Select(delegate(TodoItem item) { return item.Title; }));
+        foreach (AiEvalCase item in cases)
+            foreach (KeyValuePair<string, TodoItem> entry in suite.CreateContext(item, suite.BuildTodos()).Items)
+                True(fixtureTitles.Contains(entry.Value.Title));
+        Equal("标记完成「周报」", suite.DescribeExpectation(cases.First(delegate(AiEvalCase item) { return item.Id == "c01"; })));
+    }
+
+    private static void TestModelTestRun()
+    {
+        AiEvalSuite suite = LoadSuite();
+        List<AiEvalCase> cases = suite.SelfTestCases();
+
+        List<AiEvalResult> unclear = suite.RunAsync(cases, delegate(AiRequestContext context, string input, CancellationToken token)
+        {
+            return Task.FromResult("{\"status\":\"unclear\",\"message\":\"不明白\"}");
+        }, null, CancellationToken.None).GetAwaiter().GetResult();
+        Equal(cases.Count, unclear.Count);
+        Equal(cases.Count(delegate(AiEvalCase item) { return item.Expect == "unclear" || item.Expect == "none"; }), unclear.Count(delegate(AiEvalResult result) { return result.Pass; }));
+        True(unclear.All(delegate(AiEvalResult result) { return result.Critical.Count == 0; }));
+
+        List<AiEvalResult> reckless = suite.RunAsync(cases, delegate(AiRequestContext context, string input, CancellationToken token)
+        {
+            string target = context.Items.First(delegate(KeyValuePair<string, TodoItem> entry) { return entry.Value.Title == "周报"; }).Key;
+            return Task.FromResult("{\"status\":\"ok\",\"operations\":[{\"op\":\"delete\",\"id\":\"" + target + "\"}]}");
+        }, null, CancellationToken.None).GetAwaiter().GetResult();
+        True(reckless.First(delegate(AiEvalResult result) { return result.Case.Id == "c01"; }).Critical.Contains(AiEvalSuite.CriticalDoneAsDelete));
+        True(reckless.First(delegate(AiEvalResult result) { return result.Case.Id == "t03"; }).Critical.Contains(AiEvalSuite.CriticalUntouched));
+        True(reckless.First(delegate(AiEvalResult result) { return result.Case.Id == "e01"; }).Critical.Contains(AiEvalSuite.CriticalNonexistent));
+
+        int calls = 0;
+        List<AiEvalResult> flaky = suite.RunAsync(cases.Take(1).ToList(), delegate(AiRequestContext context, string input, CancellationToken token)
+        {
+            calls++;
+            if (calls == 1) throw new AiException(AiFailureKind.Network, "连不上");
+            return Task.FromResult("{\"status\":\"unclear\"}");
+        }, null, CancellationToken.None).GetAwaiter().GetResult();
+        Equal(2, calls);
+        Equal(1, flaky.Count);
+
+        int progressed = 0;
+        CancellationTokenSource cancel = new CancellationTokenSource();
+        bool cancelled = false;
+        try
+        {
+            suite.RunAsync(cases, delegate(AiRequestContext context, string input, CancellationToken token)
+            {
+                return Task.FromResult("{\"status\":\"unclear\"}");
+            }, delegate(int done) { progressed = done; if (done == 3) cancel.Cancel(); }, cancel.Token).GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException) { cancelled = true; }
+        True(cancelled);
+        Equal(3, progressed);
+
+        bool aborted = false;
+        try
+        {
+            suite.RunAsync(cases, delegate(AiRequestContext context, string input, CancellationToken token)
+            {
+                throw new AiException(AiFailureKind.InvalidKey, "key 无效");
+            }, null, CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch (AiException exception) { aborted = exception.Kind == AiFailureKind.InvalidKey; }
+        True(aborted);
     }
 
     private static void TestCredentialStore()

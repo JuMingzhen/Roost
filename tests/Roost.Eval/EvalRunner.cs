@@ -1,11 +1,10 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using Roost.Core;
 
@@ -18,7 +17,7 @@ internal static class EvalRunner
     {
         Console.OutputEncoding = Encoding.UTF8;
         if (args.Length >= 2 && args[0] == "--self-test") return SelfTest(args[1]);
-        if (args.Length >= 3 && args[0] == "run") return Run(args);
+        if (args.Length >= 4 && args[0] == "run") return Run(args);
         if (args.Length >= 2 && args[0] == "save-key") return SaveKey(args[1]);
         if (args.Length >= 2 && args[0] == "has-key") return string.IsNullOrEmpty(CredentialStore.Read(EvalTarget(args[1]))) ? 1 : 0;
         Console.Error.WriteLine("Usage: Roost.Eval.exe --self-test <cases.json>");
@@ -41,7 +40,7 @@ internal static class EvalRunner
 
     private static int Run(string[] args)
     {
-        Dictionary<string, object> suite = Load(args[1]);
+        AiEvalSuite suite = AiEvalSuite.Load(args[1]);
         string presetId = args[2];
         string reportPath = args[3];
         AiPreset preset = AiPresets.Find(presetId);
@@ -62,32 +61,28 @@ internal static class EvalRunner
 
         AiEndpoint endpoint = new AiEndpoint { BaseUrl = baseUrl, Model = model, ApiKey = key };
         AiClient client = new AiClient(TimeSpan.FromSeconds(90));
-        Func<AiRequestContext, Dictionary<string, object>, string, string> responder = delegate(AiRequestContext context, Dictionary<string, object> item, string input)
-        {
-            for (int attempt = 0; ; attempt++)
-            {
-                try
-                {
-                    return client.CompleteAsync(endpoint, context.SystemPrompt(), input, 2048, CancellationToken.None).GetAwaiter().GetResult();
-                }
-                catch (AiException exception)
-                {
-                    if (!exception.Retryable || attempt >= 2) throw;
-                    Thread.Sleep(3000 * (attempt + 1));
-                }
-            }
-        };
-
-        Dictionary<string, object> report;
+        List<AiEvalResult> results;
         try
         {
-            report = Evaluate(suite, responder, true);
+            results = suite.RunAsync(suite.Cases, delegate(AiRequestContext context, string input, CancellationToken token)
+            {
+                return client.CompleteAsync(endpoint, context.SystemPrompt(), input, 2048, token);
+            }, delegate(int done)
+            {
+                Console.Write("\r{0}/{1}", done, suite.Cases.Count);
+            }, CancellationToken.None).GetAwaiter().GetResult();
         }
         catch (AiException exception)
         {
+            Console.Error.WriteLine();
             Console.Error.WriteLine("评测中止：" + exception.Message);
             return 2;
         }
+        Console.WriteLine();
+        foreach (AiEvalResult result in results)
+            if (!result.Pass) Console.WriteLine("FAIL {0} {1}  -> {2}", result.Case.Id, result.Case.Input, result.Reason);
+
+        Dictionary<string, object> report = Report(results);
         report["preset"] = presetId;
         report["baseUrl"] = baseUrl;
         report["model"] = model;
@@ -102,15 +97,21 @@ internal static class EvalRunner
 
     private static int SelfTest(string path)
     {
-        Dictionary<string, object> suite = Load(path);
-        Dictionary<string, object> perfect = Evaluate(suite, Oracle(false), false);
-        Dictionary<string, object> sabotaged = Evaluate(suite, Oracle(true), false);
+        AiEvalSuite suite = AiEvalSuite.Load(path);
+        foreach (AiEvalCase item in suite.Cases)
+            CaseByInput[Key(suite.CreateContext(item, suite.BuildTodos()), item.Input)] = item;
+        Dictionary<string, object> perfect = Report(suite.RunAsync(suite.Cases, Oracle(false), null, CancellationToken.None).GetAwaiter().GetResult());
+        Dictionary<string, object> sabotaged = Report(suite.RunAsync(suite.Cases, Oracle(true), null, CancellationToken.None).GetAwaiter().GetResult());
+        List<AiEvalCase> selfTest = suite.SelfTestCases();
+        Dictionary<string, object> selfPerfect = Report(suite.RunAsync(selfTest, Oracle(false), null, CancellationToken.None).GetAwaiter().GetResult());
         int total = (int)perfect["total"];
         bool ok = total >= 50 && total <= 100 &&
                   (int)perfect["passed"] == total && (int)perfect["criticalCount"] == 0 && (bool)perfect["meetsBar"] &&
-                  (int)sabotaged["criticalCount"] > 0 && !(bool)sabotaged["meetsBar"];
-        Console.WriteLine("SELFTEST cases={0} oraclePassed={1} oracleCritical={2} saboteurCritical={3} saboteurPassed={4} -> {5}",
-            total, perfect["passed"], perfect["criticalCount"], sabotaged["criticalCount"], sabotaged["passed"], ok ? "PASS" : "FAIL");
+                  (int)sabotaged["criticalCount"] > 0 && !(bool)sabotaged["meetsBar"] &&
+                  selfTest.Count >= 12 && selfTest.Count <= 20 && (int)selfPerfect["passed"] == selfTest.Count;
+        Console.WriteLine("SELFTEST cases={0} oraclePassed={1} oracleCritical={2} saboteurCritical={3} saboteurPassed={4} modelTest={5}/{6} -> {7}",
+            total, perfect["passed"], perfect["criticalCount"], sabotaged["criticalCount"], sabotaged["passed"],
+            selfPerfect["passed"], selfTest.Count, ok ? "PASS" : "FAIL");
         if (!ok)
         {
             foreach (Dictionary<string, object> result in (List<Dictionary<string, object>>)perfect["cases"])
@@ -119,104 +120,33 @@ internal static class EvalRunner
         return ok ? 0 : 1;
     }
 
-    // 按期望结果生成回复：sabotage 时模拟三类致命错误，用来确认评分器能抓到它们。
-    private static Func<AiRequestContext, Dictionary<string, object>, string, string> Oracle(bool sabotage)
+    private static Dictionary<string, object> Report(List<AiEvalResult> results)
     {
-        return delegate(AiRequestContext context, Dictionary<string, object> item, string input)
-        {
-            string expect = (string)item["expect"];
-            if (expect == "ambiguous")
-            {
-                List<object> candidates = new List<object>();
-                foreach (object target in Array(item, "mentions")) candidates.Add(Alias(context, (string)target));
-                if (sabotage)
-                    return Json.Serialize(Reply("ok", new object[] { Op("delete", Alias(context, (string)Array(item, "mentions")[0])) }));
-                Dictionary<string, object> reply = Reply("ambiguous", null);
-                reply["candidates"] = candidates.ToArray();
-                return Json.Serialize(reply);
-            }
-            if (expect != "ok")
-            {
-                if (sabotage && (string)item["id"] == "e01") return Json.Serialize(Reply("ok", new object[] { Op("complete", Alias(context, "gym")) }));
-                return Json.Serialize(Reply("unclear", null));
-            }
-
-            List<object> operations = new List<object>();
-            foreach (Dictionary<string, object> expected in Array(item, "ops").Cast<Dictionary<string, object>>())
-            {
-                string kind = (string)expected["op"];
-                if (kind == "add")
-                {
-                    Dictionary<string, object> add = Op("add", null);
-                    add.Remove("id");
-                    add["title"] = (string)Array(expected, "title")[0];
-                    add["date"] = expected["date"];
-                    add["time"] = expected["time"];
-                    add["starred"] = expected["starred"];
-                    operations.Add(add);
-                    continue;
-                }
-                string alias = Alias(context, (string)expected["target"]);
-                if (sabotage && kind == "complete") kind = "delete";
-                Dictionary<string, object> operation = Op(kind, alias);
-                if (kind == "update")
-                {
-                    if (expected.ContainsKey("title")) operation["title"] = (string)Array(expected, "title")[0];
-                    if (expected.ContainsKey("notes")) operation["notes"] = (string)Array(expected, "notes")[0];
-                    if (expected.ContainsKey("date")) operation["date"] = expected["date"];
-                    if (expected.ContainsKey("time")) operation["time"] = expected["time"];
-                }
-                operations.Add(operation);
-            }
-            if (sabotage && (string)item["id"] == "t01") operations.Add(Op("update", Alias(context, "meeting_product")));
-            if (sabotage && (string)item["id"] == "t01") ((Dictionary<string, object>)operations[operations.Count - 1])["time"] = "16:00";
-            return "```json\n" + Json.Serialize(Reply("ok", operations.ToArray())) + "\n```";
-        };
-    }
-
-    private static Dictionary<string, object> Evaluate(Dictionary<string, object> suite, Func<AiRequestContext, Dictionary<string, object>, string, string> responder, bool verbose)
-    {
-        Dictionary<string, object> fixture = (Dictionary<string, object>)suite["fixture"];
-        int dayStart = Convert.ToInt32(fixture["dayStartMinutes"], CultureInfo.InvariantCulture);
-        List<Dictionary<string, object>> results = new List<Dictionary<string, object>>();
+        List<Dictionary<string, object>> cases = new List<Dictionary<string, object>>();
         List<string> criticalCases = new List<string>();
         List<long> latencies = new List<long>();
-        int passed = 0, critical = 0;
-        foreach (Dictionary<string, object> item in Array(suite, "cases").Cast<Dictionary<string, object>>())
+        int passed = 0;
+        foreach (AiEvalResult result in results)
         {
-            List<TodoItem> todos = BuildTodos(fixture);
-            DateTime now = ParseLocal(item.ContainsKey("now") ? (string)item["now"] : (string)fixture["now"]);
-            AiRequestContext context = AiRequestContext.Create(todos, now, dayStart);
-            string input = (string)item["input"];
-            Stopwatch clock = Stopwatch.StartNew();
-            string reply = responder(context, item, input);
-            clock.Stop();
-            latencies.Add(clock.ElapsedMilliseconds);
-            AiPlan plan = AiPlanParser.Parse(reply, context);
-            List<string> criticals;
-            string reason = Check(item, plan, todos, out criticals);
-            bool pass = reason == null && criticals.Count == 0;
-            if (pass) passed++;
-            if (criticals.Count > 0) { critical++; criticalCases.Add((string)item["id"]); }
-
-            Dictionary<string, object> result = new Dictionary<string, object>();
-            result["id"] = item["id"];
-            result["category"] = item["category"];
-            result["input"] = input;
-            result["pass"] = pass;
-            result["reason"] = reason ?? (criticals.Count > 0 ? "致命错误" : null);
-            result["critical"] = criticals.ToArray();
-            result["status"] = plan.Status.ToString();
-            result["operations"] = plan.Operations.Select(delegate(AiOperation operation)
+            if (result.Pass) passed++;
+            if (result.Critical.Count > 0) criticalCases.Add(result.Case.Id);
+            latencies.Add(result.LatencyMs);
+            Dictionary<string, object> entry = new Dictionary<string, object>();
+            entry["id"] = result.Case.Id;
+            entry["category"] = result.Case.Category;
+            entry["input"] = result.Case.Input;
+            entry["pass"] = result.Pass;
+            entry["reason"] = result.Reason;
+            entry["critical"] = result.Critical.ToArray();
+            entry["status"] = result.Plan.Status.ToString();
+            entry["operations"] = result.Plan.Operations.Select(delegate(AiOperation operation)
             {
                 return (operation.IsValid ? string.Empty : "[无效] ") + operation.Summary;
             }).ToArray();
-            result["latencyMs"] = clock.ElapsedMilliseconds;
-            if (!pass) result["reply"] = reply.Length <= 600 ? reply : reply.Substring(0, 600) + "…";
-            results.Add(result);
-            if (verbose) Console.WriteLine("{0} {1} {2}{3}", pass ? "PASS" : "FAIL", item["id"], input, pass ? string.Empty : "  -> " + result["reason"] + (criticals.Count > 0 ? "（" + string.Join("；", criticals.ToArray()) + "）" : string.Empty));
+            entry["latencyMs"] = result.LatencyMs;
+            if (!result.Pass) entry["reply"] = result.Reply.Length <= 600 ? result.Reply : result.Reply.Substring(0, 600) + "…";
+            cases.Add(entry);
         }
-
         latencies.Sort();
         int total = results.Count;
         double accuracy = total == 0 ? 0 : (double)passed / total;
@@ -225,124 +155,88 @@ internal static class EvalRunner
         report["total"] = total;
         report["passed"] = passed;
         report["accuracy"] = Math.Round(accuracy, 4);
-        report["criticalCount"] = critical;
+        report["criticalCount"] = criticalCases.Count;
         report["criticalCases"] = criticalCases.ToArray();
         report["requiredAccuracy"] = RequiredAccuracy;
-        report["meetsBar"] = critical == 0 && accuracy >= RequiredAccuracy;
+        report["meetsBar"] = criticalCases.Count == 0 && accuracy >= RequiredAccuracy;
         report["medianLatencyMs"] = latencies.Count == 0 ? 0 : latencies[latencies.Count / 2];
         report["p90LatencyMs"] = latencies.Count == 0 ? 0 : latencies[Math.Min(latencies.Count - 1, (int)Math.Ceiling(latencies.Count * 0.9) - 1)];
         report["maxLatencyMs"] = latencies.Count == 0 ? 0 : latencies[latencies.Count - 1];
-        report["cases"] = results;
+        report["cases"] = cases;
         return report;
     }
 
-    private static string Check(Dictionary<string, object> item, AiPlan plan, List<TodoItem> todos, out List<string> criticals)
+    // 按期望结果生成回复：sabotage 时模拟三类致命错误，用来确认判分规则能抓到它们。
+    private static Func<AiRequestContext, string, CancellationToken, Task<string>> Oracle(bool sabotage)
     {
-        criticals = new List<string>();
-        string expect = (string)item["expect"];
-        List<Dictionary<string, object>> expectedOps = Array(item, "ops").Cast<Dictionary<string, object>>().ToList();
-        List<AiOperation> actual = plan.Operations.Where(delegate(AiOperation operation) { return operation.IsValid; }).ToList();
-
-        HashSet<string> allowed = new HashSet<string>();
-        HashSet<string> done = new HashSet<string>();
-        foreach (object target in Array(item, "mentions")) allowed.Add((string)target);
-        foreach (Dictionary<string, object> expected in expectedOps)
+        return delegate(AiRequestContext context, string input, CancellationToken token)
         {
-            if (!expected.ContainsKey("target")) continue;
-            allowed.Add((string)expected["target"]);
-            if ((string)expected["op"] == "complete") done.Add((string)expected["target"]);
-        }
-        foreach (object target in Array(item, "doneTargets")) done.Add((string)target);
+            return Task.FromResult(OracleReply(context, input, sabotage));
+        };
+    }
 
-        foreach (AiOperation operation in actual)
-        {
-            if (operation.Kind == AiOperationKind.Add) continue;
-            if (operation.Kind == AiOperationKind.Delete && done.Contains(operation.TargetId))
-                AddOnce(criticals, "把「做完了」当成了删除");
-            if (!allowed.Contains(operation.TargetId))
-                AddOnce(criticals, (string)item["category"] == "不存在" ? "对不存在的待办产生了改动" : "改动了用户没有提到的待办");
-        }
+    private static readonly Dictionary<string, AiEvalCase> CaseByInput = new Dictionary<string, AiEvalCase>();
 
-        if (expect == "none")
-            return actual.Count == 0 ? null : "应当不产生任何改动";
-        if (expect == "unclear")
-            return plan.Status == AiPlanStatus.Unclear ? null : "应当回复没听懂，实际为 " + plan.Status;
+    private static string OracleReply(AiRequestContext context, string input, bool sabotage)
+    {
+        AiEvalCase item = FindCase(context, input);
+        string expect = item.Expect;
         if (expect == "ambiguous")
         {
-            if (plan.Status != AiPlanStatus.Ambiguous) return "应当判定为有歧义，实际为 " + plan.Status;
-            return null;
+            object[] mentions = AiEvalSuite.Array(item.Raw, "mentions");
+            if (sabotage) return Json.Serialize(Reply("ok", new object[] { Op("delete", Alias(context, (string)mentions[0])) }));
+            Dictionary<string, object> reply = Reply("ambiguous", null);
+            reply["candidates"] = mentions.Select(delegate(object target) { return (object)Alias(context, (string)target); }).ToArray();
+            return Json.Serialize(reply);
         }
-        if (plan.Status != AiPlanStatus.Ok) return "应当产生改动，实际为 " + plan.Status + "：" + plan.Message;
-
-        List<AiOperation> remaining = new List<AiOperation>(actual);
-        foreach (Dictionary<string, object> expected in expectedOps)
+        if (expect != "ok")
         {
-            AiOperation match = remaining.FirstOrDefault(delegate(AiOperation operation) { return Matches(expected, operation, todos); });
-            if (match == null) return "缺少或不符合期望的操作：" + Describe(expected);
-            remaining.Remove(match);
+            if (sabotage && item.Id == "e01") return Json.Serialize(Reply("ok", new object[] { Op("complete", Alias(context, "gym")) }));
+            return Json.Serialize(Reply("unclear", null));
         }
-        if (remaining.Count > 0) return "多出了操作：" + remaining[0].Summary;
-        return null;
-    }
 
-    private static bool Matches(Dictionary<string, object> expected, AiOperation actual, List<TodoItem> todos)
-    {
-        string kind = (string)expected["op"];
-        if (!string.Equals(actual.Kind.ToString(), kind, StringComparison.OrdinalIgnoreCase)) return false;
-        if (kind == "add")
+        List<object> operations = new List<object>();
+        foreach (Dictionary<string, object> expected in AiEvalSuite.Array(item.Raw, "ops").Cast<Dictionary<string, object>>())
         {
-            return ContainsAny(actual.Title, Array(expected, "title")) &&
-                   actual.DueDate == (string)expected["date"] && actual.DueTime == (string)expected["time"] &&
-                   actual.Starred == (bool)expected["starred"];
-        }
-        if (actual.TargetId != (string)expected["target"]) return false;
-        if (kind != "update") return true;
-
-        TodoItem original = todos.First(delegate(TodoItem item) { return item.Id == actual.TargetId; });
-        if (expected.ContainsKey("title") ? !(actual.HasTitle && ContainsAny(actual.Title, Array(expected, "title"))) : (actual.HasTitle && actual.Title != original.Title)) return false;
-        if (expected.ContainsKey("notes") ? !(actual.HasNotes && ContainsAny(actual.Notes, Array(expected, "notes"))) : (actual.HasNotes && actual.Notes != (original.Notes ?? string.Empty))) return false;
-        bool expectDue = expected.ContainsKey("date") || expected.ContainsKey("time");
-        if (expectDue) return actual.HasDue && actual.DueDate == (string)expected["date"] && actual.DueTime == (string)expected["time"];
-        return !actual.HasDue || (actual.DueDate == original.DueDate && actual.DueTime == original.DueTime);
-    }
-
-    private static List<TodoItem> BuildTodos(Dictionary<string, object> fixture)
-    {
-        List<TodoItem> todos = new List<TodoItem>();
-        foreach (Dictionary<string, object> raw in Array(fixture, "todos").Cast<Dictionary<string, object>>())
-        {
-            todos.Add(new TodoItem
+            string kind = (string)expected["op"];
+            if (kind == "add")
             {
-                Id = (string)raw["id"],
-                Title = (string)raw["title"],
-                DueDate = raw.ContainsKey("dueDate") ? (string)raw["dueDate"] : null,
-                DueTime = raw.ContainsKey("dueTime") ? (string)raw["dueTime"] : null,
-                IsStarred = raw.ContainsKey("starred") && (bool)raw["starred"],
-                IsCompleted = raw.ContainsKey("completed") && (bool)raw["completed"],
-                CompletedAtUtc = raw.ContainsKey("completedAtUtc") ? (string)raw["completedAtUtc"] : null,
-                IsDeleted = raw.ContainsKey("deleted") && (bool)raw["deleted"],
-                CreatedAtUtc = (string)raw["createdAtUtc"],
-                UpdatedAtUtc = (string)raw["createdAtUtc"]
-            });
+                Dictionary<string, object> add = new Dictionary<string, object> { { "op", "add" } };
+                add["title"] = (string)AiEvalSuite.Array(expected, "title")[0];
+                add["date"] = expected["date"];
+                add["time"] = expected["time"];
+                add["starred"] = expected["starred"];
+                operations.Add(add);
+                continue;
+            }
+            if (sabotage && kind == "complete") kind = "delete";
+            Dictionary<string, object> operation = Op(kind, Alias(context, (string)expected["target"]));
+            if (kind == "update")
+            {
+                if (expected.ContainsKey("title")) operation["title"] = (string)AiEvalSuite.Array(expected, "title")[0];
+                if (expected.ContainsKey("notes")) operation["notes"] = (string)AiEvalSuite.Array(expected, "notes")[0];
+                if (expected.ContainsKey("date")) operation["date"] = expected["date"];
+                if (expected.ContainsKey("time")) operation["time"] = expected["time"];
+            }
+            operations.Add(operation);
         }
-        return todos;
+        if (sabotage && item.Id == "t01")
+        {
+            Dictionary<string, object> collateral = Op("update", Alias(context, "meeting_product"));
+            collateral["time"] = "16:00";
+            operations.Add(collateral);
+        }
+        return "```json\n" + Json.Serialize(Reply("ok", operations.ToArray())) + "\n```";
     }
 
-    private static Dictionary<string, object> Load(string path)
+    private static AiEvalCase FindCase(AiRequestContext context, string input)
     {
-        return (Dictionary<string, object>)Json.DeserializeObject(File.ReadAllText(path, Encoding.UTF8));
+        return CaseByInput[Key(context, input)];
     }
 
-    private static object[] Array(Dictionary<string, object> source, string key)
+    private static string Key(AiRequestContext context, string input)
     {
-        object value;
-        if (!source.TryGetValue(key, out value) || value == null) return new object[0];
-        return value as object[] ?? ((System.Collections.ArrayList)value).ToArray();
-    }
-
-    private static DateTime ParseLocal(string value)
-    {
-        return DateTime.ParseExact(value, "yyyy-MM-dd'T'HH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal);
+        return context.Now.ToString("o") + "|" + input;
     }
 
     private static string Alias(AiRequestContext context, string id)
@@ -363,23 +257,5 @@ internal static class EvalRunner
     private static Dictionary<string, object> Op(string kind, string alias)
     {
         return new Dictionary<string, object> { { "op", kind }, { "id", alias } };
-    }
-
-    private static bool ContainsAny(string text, object[] keywords)
-    {
-        if (string.IsNullOrEmpty(text)) return false;
-        foreach (object keyword in keywords)
-            if (text.IndexOf((string)keyword, StringComparison.OrdinalIgnoreCase) >= 0) return true;
-        return false;
-    }
-
-    private static string Describe(Dictionary<string, object> expected)
-    {
-        return Json.Serialize(expected);
-    }
-
-    private static void AddOnce(List<string> list, string value)
-    {
-        if (!list.Contains(value)) list.Add(value);
     }
 }

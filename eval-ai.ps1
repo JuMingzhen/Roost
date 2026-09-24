@@ -34,7 +34,7 @@ try {
     $label = if ($Model) { $Model } else { 'default' }
     $safeLabel = ($label -replace '[^A-Za-z0-9._-]', '_')
     $report = Join-Path $root ("artifacts\m2\eval-{0}-{1}.json" -f $Preset, $safeLabel)
-    & $eval run (Join-Path $root 'tests\ai-eval\cases.json') $Preset $report $BaseUrl $Model
+    & $eval run (Join-Path $root 'assets\ai-eval\cases.json') $Preset $report $BaseUrl $Model
     $code = $LASTEXITCODE
     Write-Output "Report: $report"
     if ($code -eq 1) { throw "$Preset 未通过评测集（致命错误必须为 0，正确率 ≥ 90%）。" }

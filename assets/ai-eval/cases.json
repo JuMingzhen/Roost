@@ -1,6 +1,6 @@
 {
  "version": 1,
- "description": "Roost AI 评测集（PRD 8.6）。全部为虚构数据。",
+ "description": "Roost AI 评测集（PRD 8.6）与模型测试题（PRD 9.6，selfTest 为 true 的题目）。全部为虚构数据。",
  "fixture": {
   "now": "2026-09-23T10:00:00",
   "dayStartMinutes": 240,
@@ -107,7 +107,8 @@
      "time": "15:00",
      "starred": true
     }
-   ]
+   ],
+   "selfTest": true
   },
   {
    "id": "a02",
@@ -158,7 +159,8 @@
      "time": "10:00",
      "starred": false
     }
-   ]
+   ],
+   "selfTest": true
   },
   {
    "id": "a05",
@@ -322,7 +324,8 @@
     }
    ],
    "now": "2026-09-23T01:00:00",
-   "note": "凌晨 1 点说明天，指日历上的当天（PRD 8.3）"
+   "note": "凌晨 1 点说明天，指日历上的当天（PRD 8.3）",
+   "selfTest": true
   },
   {
    "id": "a14",
@@ -427,7 +430,8 @@
      "date": "2026-09-25",
      "time": "17:00"
     }
-   ]
+   ],
+   "selfTest": true
   },
   {
    "id": "u02",
@@ -527,7 +531,8 @@
      "date": "2026-09-24",
      "time": "15:00"
     }
-   ]
+   ],
+   "selfTest": true
   },
   {
    "id": "u09",
@@ -567,7 +572,8 @@
      "op": "complete",
      "target": "report"
     }
-   ]
+   ],
+   "selfTest": true
   },
   {
    "id": "c02",
@@ -619,7 +625,8 @@
      "op": "complete",
      "target": "gym"
     }
-   ]
+   ],
+   "selfTest": true
   },
   {
    "id": "c06",
@@ -763,7 +770,8 @@
      "op": "delete",
      "target": "gym"
     }
-   ]
+   ],
+   "selfTest": true
   },
   {
    "id": "d02",
@@ -822,7 +830,8 @@
    "mentions": [
     "meeting_product",
     "meeting_weekly"
-   ]
+   ],
+   "selfTest": true
   },
   {
    "id": "g02",
@@ -848,7 +857,8 @@
    "doneTargets": [
     "meeting_product",
     "meeting_weekly"
-   ]
+   ],
+   "selfTest": true
   },
   {
    "id": "g04",
@@ -866,7 +876,8 @@
    "category": "没听懂",
    "input": "今天天气怎么样",
    "expect": "unclear",
-   "ops": []
+   "ops": [],
+   "selfTest": true
   },
   {
    "id": "x02",
@@ -901,7 +912,8 @@
    "category": "不存在",
    "input": "体检做完了",
    "expect": "none",
-   "ops": []
+   "ops": [],
+   "selfTest": true
   },
   {
    "id": "e02",
@@ -916,7 +928,8 @@
    "input": "把年度总结改到明天",
    "expect": "none",
    "ops": [],
-   "note": "一个月前完成的待办不在发送范围内（PRD 8.7）"
+   "note": "一个月前完成的待办不在发送范围内（PRD 8.7）",
+   "selfTest": true
   },
   {
    "id": "e04",
@@ -945,7 +958,8 @@
      "time": "15:00",
      "starred": true
     }
-   ]
+   ],
+   "selfTest": true
   },
   {
    "id": "m02",
@@ -1022,7 +1036,8 @@
      "op": "delete",
      "target": "gym"
     }
-   ]
+   ],
+   "selfTest": true
   },
   {
    "id": "t01",
@@ -1070,7 +1085,8 @@
      "time": null,
      "starred": false
     }
-   ]
+   ],
+   "selfTest": true
   }
  ]
 }
