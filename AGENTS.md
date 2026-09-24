@@ -44,6 +44,7 @@
 - Windows PowerShell 5.1 脚本编码与语法：`.\verify-powershell.ps1`（也会由 `test.ps1` 自动执行）。
 - 桌面系统集成与单实例：`.\verify-system.ps1`。
 - 像素颜色与截图：`.\verify-pixel.ps1`。
+- 当前缩放下的窗口排版（文字放得下、控件不重叠、不越界）：`.\verify-layout.ps1`（也由 `verify-dpi.ps1` 执行）。
 - 指定真实 Windows 缩放门禁：`.\verify-dpi.ps1 -ExpectedScalePercent 100`（另跑 125、150）。
 - 10 分钟资源占用与隐藏暂停：`.\verify-resource.ps1`。
 - AI 改计划流程（本地假模型，不需要 key）：`.\verify-ai.ps1`。

@@ -18,13 +18,18 @@ $screenshots = Join-Path $artifactRoot 'pixel-screenshots'
 if ($LASTEXITCODE -ne 0) { throw '真实 DPI 下的点击穿透验证失败。' }
 & (Join-Path $root 'dist\Roost.Verify.exe') pixel $pixelPath $screenshots
 if ($LASTEXITCODE -ne 0) { throw '真实 DPI 下的像素验证失败。' }
+$layoutPath = Join-Path $artifactRoot 'layout.json'
+& (Join-Path $root 'dist\Roost.Verify.exe') layout $layoutPath (Join-Path $artifactRoot 'layout-screenshots')
+if ($LASTEXITCODE -ne 0) { throw '真实 DPI 下的窗口排版验证失败。' }
 
 $system = Get-Content -Raw -LiteralPath $systemPath | ConvertFrom-Json
-$pixel = Get-Content -Raw -LiteralPath $pixelPath | ConvertFrom-Json
-if ($system.actualScalePercent -ne $ExpectedScalePercent -or $pixel.actualScalePercent -ne $ExpectedScalePercent) {
-    throw "当前验证进程检测到的缩放不是 $ExpectedScalePercent%：system=$($system.actualScalePercent)%，pixel=$($pixel.actualScalePercent)%。请确认 Windows 缩放已经生效后重跑。"
+$pixel = Get-Content -Raw -LiteralPath $pixelPath
+Get-Content -Raw -LiteralPath $layoutPath | ConvertFrom-Json
+$layout = Get-Content -Raw -LiteralPath $layoutPath | ConvertFrom-Json
+if ($system.actualScalePercent -ne $ExpectedScalePercent -or $pixel.actualScalePercent -ne $ExpectedScalePercent -or $layout.actualScalePercent -ne $ExpectedScalePercent) {
+    throw "当前验证进程检测到的缩放不是 $ExpectedScalePercent%：system=$($system.actualScalePercent)%，pixel=$($pixel.actualScalePercent)%，layout=$($layout.actualScalePercent)%。请确认 Windows 缩放已经生效后重跑。"
 }
-if (-not $system.overallPass -or -not $pixel.overallPass -or -not $pixel.actualHardwarePass) {
+if (-not $system.overallPass -or -not $pixel.overallPass -or -not $pixel.actualHardwarePass -or -not $layout.overallPass) {
     throw "真实 $ExpectedScalePercent% 缩放验证未通过。"
 }
 

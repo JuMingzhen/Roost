@@ -46,7 +46,7 @@ internal static class VerificationRunner
         Application.SetCompatibleTextRenderingDefault(false);
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("Usage: Roost.Verify.exe <system|pixel|cpu|ai> ...");
+            Console.Error.WriteLine("Usage: Roost.Verify.exe <system|pixel|cpu|ai|layout> ...");
             return 64;
         }
         try
@@ -55,6 +55,7 @@ internal static class VerificationRunner
             if (args[0] == "pixel") return RunPixel(args[1], args[2]);
             if (args[0] == "cpu") return RunCpu(args[1], int.Parse(args[2]), int.Parse(args[3]));
             if (args[0] == "ai") return RunAi(args[1]);
+            if (args[0] == "layout") return RunLayout(args[1], args[2]);
             return 64;
         }
         catch (Exception exception)
@@ -497,6 +498,153 @@ internal static class VerificationRunner
         if (left.Length != right.Length) return false;
         for (int i = 0; i < left.Length; i++) if (left[i] != right[i]) return false;
         return true;
+    }
+
+    // 在当前真实缩放下打开每个窗口，检查文字放得下、同级控件不重叠、控件不超出父容器。
+    private static int RunLayout(string outputPath, string screenshotDirectory)
+    {
+        Directory.CreateDirectory(screenshotDirectory);
+        Environment.SetEnvironmentVariable("ROOST_SKIP_HOTKEY_WARNING", "1");
+        List<string> problems = new List<string>();
+        List<string> checkedForms = new List<string>();
+        int scale = 0;
+
+        RoostSettings settings = new RoostSettings { AiPresetId = "deepseek", AiBaseUrl = "https://api.deepseek.com/v1", AiModel = "deepseek-flash" };
+        SettingsForm settingsForm = new SettingsForm(settings);
+        TabControl tabs = null;
+        foreach (Control control in settingsForm.Controls) if (control is TabControl) tabs = (TabControl)control;
+        ShowOffscreen(settingsForm);
+        scale = GetScalePercent(settingsForm);
+        foreach (TabPage page in tabs.TabPages)
+        {
+            tabs.SelectedTab = page;
+            Pump(50);
+            CheckLayout(page, "设置/" + page.Text, problems);
+            Capture(settingsForm, Path.Combine(screenshotDirectory, "settings-" + tabs.SelectedIndex + ".png"));
+            checkedForms.Add("设置/" + page.Text);
+        }
+        settingsForm.Close();
+
+        TodoItem sample = new TodoItem { Title = "虚构待办：整理季度材料", Notes = "虚构备注", DueDate = "2026-09-24", DueTime = "15:00", IsStarred = true };
+        TodoEditorForm editor = new TodoEditorForm(sample);
+        CheckForm(editor, "编辑待办", screenshotDirectory, problems, checkedForms);
+
+        List<TodoItem> todos = new List<TodoItem>();
+        foreach (string title in new[] { "健身", "周报", "交房租" }) todos.Add(new TodoItem { Title = title });
+        AiRequestContext context = AiRequestContext.Create(todos, new DateTime(2026, 9, 23, 10, 0, 0), 240);
+        AiPlan plan = AiPlanParser.Parse("{\"status\":\"ok\",\"operations\":[" +
+            "{\"op\":\"add\",\"title\":\"复盘会\",\"date\":\"2026-09-24\",\"time\":\"15:00\",\"starred\":true}," +
+            "{\"op\":\"add\",\"title\":\"交电费\",\"date\":\"2026-09-23\",\"time\":\"08:00\"}," +
+            "{\"op\":\"complete\",\"id\":\"t2\"},{\"op\":\"delete\",\"id\":\"t1\"},{\"op\":\"delete\",\"id\":null,\"ref\":\"体检\"}]}", context);
+        CheckForm(new AiPreviewForm(plan), "AI 预览", screenshotDirectory, problems, checkedForms);
+        CheckForm(new AiSelfTestForm(new AiEndpoint { BaseUrl = "http://127.0.0.1:1", Model = "deepseek-flash", ApiKey = "x" },
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "ai-eval", "cases.json")), "模型测试题", screenshotDirectory, problems, checkedForms);
+
+        string root = NewTestDirectory();
+        TodoService service = new TodoService(new TodoRepository(Path.Combine(root, "data.json")));
+        service.Create("虚构待办：给植物浇水", null, "2026-09-24", "09:00", true);
+        service.Create("虚构待办：买牙膏", null, null, null, false);
+        service.Data.Settings.FirstRunCompleted = true;
+        service.Data.Settings.ListVisible = true;
+        service.SaveSettings();
+        PetForm pet = new PetForm(service, NativeMethods.RegisterWindowMessage("Roost.Verify.Layout." + Guid.NewGuid().ToString("N")), Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "cat"));
+        pet.Show();
+        pet.DisableFullscreenDetectionForTest();
+        Pump(300);
+        foreach (Control control in pet.Controls)
+            if (control is Panel && control.Visible && !(control is BubbleView)) CheckLayout(control, "清单", problems);
+        Capture(pet, Path.Combine(screenshotDirectory, "list.png"));
+        checkedForms.Add("清单");
+        pet.CloseForTest();
+
+        foreach (string problem in problems) Console.Error.WriteLine(problem);
+        bool pass = problems.Count == 0;
+        Dictionary<string, object> result = Base("layout");
+        result["actualScalePercent"] = scale;
+        result["checked"] = checkedForms.ToArray();
+        result["problemCount"] = problems.Count;
+        result["problems"] = problems.ToArray();
+        result["overallPass"] = pass;
+        result["status"] = pass ? "PASS" : "FAIL";
+        WriteJson(outputPath, result);
+        return pass ? 0 : 1;
+    }
+
+    private static void CheckForm(Form form, string name, string screenshotDirectory, List<string> problems, List<string> checkedForms)
+    {
+        ShowOffscreen(form);
+        CheckLayout(form, name, problems);
+        Capture(form, Path.Combine(screenshotDirectory, "form-" + checkedForms.Count + ".png"));
+        checkedForms.Add(name);
+        form.Close();
+        form.Dispose();
+    }
+
+    private static void ShowOffscreen(Form form)
+    {
+        form.StartPosition = FormStartPosition.CenterScreen;
+        form.Show();
+        Pump(150);
+    }
+
+    private static void Capture(Control control, string path)
+    {
+        using (Bitmap bitmap = new Bitmap(Math.Max(1, control.Width), Math.Max(1, control.Height)))
+        {
+            control.DrawToBitmap(bitmap, new Rectangle(Point.Empty, control.Size));
+            bitmap.Save(path, ImageFormat.Png);
+        }
+    }
+
+    private static void CheckLayout(Control parent, string path, List<string> problems)
+    {
+        bool scrolls = parent is ScrollableControl && ((ScrollableControl)parent).AutoScroll;
+        List<Control> visible = new List<Control>();
+        foreach (Control child in parent.Controls) if (child.Visible) visible.Add(child);
+        foreach (Control child in visible)
+        {
+            string name = path + "/" + Describe(child);
+            if (!scrolls && !(parent is TabControl) && !parent.ClientRectangle.Contains(child.Bounds))
+                problems.Add(name + " 超出父容器 " + child.Bounds + " / " + parent.ClientRectangle);
+            string textProblem = TextProblem(child);
+            if (textProblem != null) problems.Add(name + " " + textProblem);
+            if (!(child is TabControl) && child.Controls.Count > 0) CheckLayout(child, name, problems);
+            if (child is TabControl)
+            {
+                TabPage page = ((TabControl)child).SelectedTab;
+                if (page != null) CheckLayout(page, name + "/" + page.Text, problems);
+            }
+        }
+        for (int i = 0; i < visible.Count; i++)
+            for (int j = i + 1; j < visible.Count; j++)
+                if (visible[i].Bounds.IntersectsWith(visible[j].Bounds))
+                    problems.Add(path + " 重叠：" + Describe(visible[i]) + " " + visible[i].Bounds + " 与 " + Describe(visible[j]) + " " + visible[j].Bounds);
+    }
+
+    private static string TextProblem(Control control)
+    {
+        if (string.IsNullOrEmpty(control.Text) || control is TextBox || control is ComboBox || control is TabControl || control is Form) return null;
+        Label label = control as Label;
+        ButtonBase button = control as ButtonBase;
+        if (label == null && button == null) return null;
+        if ((label != null && label.AutoEllipsis) || (button != null && button.AutoEllipsis)) return null;
+        if (control.AutoSize && !(control is Label && control.Text.Contains("\n"))) return null;
+        int chrome = control is CheckBox || control is RadioButton ? 20 : (button != null ? 8 : 0);
+        int available = Math.Max(1, control.Width - chrome);
+        Size needed = TextRenderer.MeasureText(control.Text, control.Font, new Size(available, int.MaxValue), TextFormatFlags.WordBreak);
+        Size singleLine = TextRenderer.MeasureText(control.Text, control.Font);
+        bool wraps = label != null && !label.AutoSize;
+        if (!wraps && singleLine.Width > available) return string.Format("文字放不下：需要宽 {0}，只有 {1}", singleLine.Width, available);
+        if (needed.Height > control.Height + 1) return string.Format("文字放不下：需要高 {0}，只有 {1}", needed.Height, control.Height);
+        return null;
+    }
+
+    private static string Describe(Control control)
+    {
+        string text = control.Text ?? string.Empty;
+        text = text.Replace("\r", " ").Replace("\n", " ");
+        if (text.Length > 12) text = text.Substring(0, 12) + "…";
+        return control.GetType().Name + (text.Length > 0 ? "「" + text + "」" : string.Empty);
     }
 
     private static List<Point> FindPoints(PetForm form, bool visible, int count)

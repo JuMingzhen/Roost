@@ -129,6 +129,7 @@ namespace Roost.App
             about.Controls.Add(repository);
 
             Controls.Add(tabs);
+            DpiScale.Apply(this);
         }
 
         internal void ShowAiTab()

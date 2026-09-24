@@ -57,6 +57,7 @@ namespace Roost.App
             CancelButton = cancel;
             Controls.AddRange(new Control[] { headline, hint, list, cancel, confirm });
             UpdateConfirm();
+            DpiScale.Apply(this);
         }
 
         internal List<string> RowTextsForTest

@@ -63,6 +63,7 @@ namespace Roost.App
             CancelButton = close;
             Controls.AddRange(new Control[] { intro, progress, status, summary, details, start, close });
             FormClosed += delegate { if (running != null) running.Cancel(); };
+            DpiScale.Apply(this);
         }
 
         internal int QuestionCountForTest { get { return cases.Count; } }

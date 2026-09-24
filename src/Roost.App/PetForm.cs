@@ -174,6 +174,7 @@ namespace Roost.App
             bubble = new BubbleView { Font = Font };
             bubble.Dismissed += delegate { bubbleTimer.Stop(); bubbleSize = Size.Empty; ApplyLayout(); };
             Controls.Add(bubble);
+            DpiScale.Apply(listPanel);
             Controls.Add(listPanel);
             Controls.Add(sprite);
 
@@ -308,7 +309,7 @@ namespace Roost.App
             int size = PetSize();
             Screen screen = Screen.FromPoint(petAnchor);
             petAnchor = LayoutRules.RecoverPetPosition(petAnchor, new Size(size, size), screen.WorkingArea);
-            PetLayout layout = LayoutRules.Compute(petAnchor, new Size(size, size), ListSize, bubbleSize, screen.WorkingArea, todos.Data.Settings.ListVisible, 8);
+            PetLayout layout = LayoutRules.Compute(petAnchor, new Size(size, size), DpiScale.Px(ListSize), bubbleSize, screen.WorkingArea, todos.Data.Settings.ListVisible, DpiScale.Px(8));
             Bounds = layout.WindowBounds;
             sprite.Bounds = layout.PetBounds;
             listPanel.Bounds = layout.ListBounds;
@@ -395,6 +396,7 @@ namespace Roost.App
                     ForeColor = Color.DimGray,
                     TextAlign = ContentAlignment.MiddleCenter
                 };
+                DpiScale.Apply(empty);
                 rows.Controls.Add(empty);
             }
             foreach (TodoItem item in visible.Items)
@@ -404,6 +406,7 @@ namespace Roost.App
                 row.StarRequested += delegate(TodoItem value) { todos.ToggleStarred(value.Id); RefreshList(); };
                 row.CompleteRequested += delegate(TodoItem value) { ToggleComplete(value, row); };
                 row.DeleteRequested += delegate(TodoItem value) { Delete(value); };
+                DpiScale.Apply(row);
                 rows.Controls.Add(row);
             }
             moreButton.Visible = visible.HiddenCount > 0 || (todos.Data.Settings.ListExpanded && sorted.Count > 5);
