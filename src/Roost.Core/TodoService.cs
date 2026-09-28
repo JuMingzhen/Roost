@@ -84,6 +84,50 @@ namespace Roost.Core
             Save();
         }
 
+        // 清单编辑模式：一次删除多条，只保存一次。返回实际删除的 id，用于整批撤销。
+        public List<string> DeleteMany(IEnumerable<string> ids)
+        {
+            List<string> deleted = new List<string>();
+            string now = DateTime.UtcNow.ToString("o");
+            foreach (string id in ids)
+            {
+                TodoItem item = Find(id);
+                if (item == null || item.IsDeleted) continue;
+                item.IsDeleted = true;
+                item.DeletedAtUtc = now;
+                Touch(item);
+                deleted.Add(item.Id);
+            }
+            if (deleted.Count > 0) Save();
+            return deleted;
+        }
+
+        public void UndoDeleteMany(IEnumerable<string> ids)
+        {
+            foreach (string id in ids)
+            {
+                TodoItem item = Find(id);
+                if (item == null || !item.IsDeleted) continue;
+                item.IsDeleted = false;
+                item.DeletedAtUtc = null;
+                Touch(item);
+            }
+            Save();
+        }
+
+        // 清单编辑模式：给选中的待办都打上星标。
+        public void StarMany(IEnumerable<string> ids)
+        {
+            foreach (string id in ids)
+            {
+                TodoItem item = Find(id);
+                if (item == null || item.IsDeleted || item.IsStarred) continue;
+                item.IsStarred = true;
+                Touch(item);
+            }
+            Save();
+        }
+
         public AiUndo ApplyAi(IEnumerable<AiOperation> operations)
         {
             AiUndo undo = new AiUndo();

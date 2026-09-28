@@ -28,6 +28,7 @@ internal static class TestRunner
         Run("超过五条折叠", TestCollapse);
         Run("04:00 边界", TestDayBoundary);
         Run("待办新建、编辑、完成、删除撤销和星标", TestTodoOperations);
+        Run("编辑模式：批量删除整批撤销、批量加星标", TestBatchEdit);
         Run("布局翻转、找回、贴边和透明度", TestLayoutRules);
         Run("位置与清单设置重启后保持", TestSettingsPersistence);
         Run("全屏窗口判定", TestFullscreenRules);
@@ -186,6 +187,31 @@ internal static class TestRunner
         try { service.Create("   ", null, null, null, false); }
         catch (ArgumentException) { rejected = true; }
         True(rejected);
+    }
+
+    private static void TestBatchEdit()
+    {
+        string root = NewTestDirectory();
+        string path = Path.Combine(root, "data.json");
+        TodoService service = new TodoService(new TodoRepository(path));
+        TodoItem first = service.Create("虚构待办甲", null, null, null, false);
+        TodoItem second = service.Create("虚构待办乙", null, null, null, true);
+        TodoItem third = service.Create("虚构待办丙", null, null, null, false);
+
+        List<string> deleted = service.DeleteMany(new string[] { first.Id, second.Id, "不存在的 id" });
+        Equal(2, deleted.Count);
+        True(new TodoRepository(path).Load().Todos.Find(delegate(TodoItem item) { return item.Id == second.Id; }).IsDeleted);
+        False(service.Find(third.Id).IsDeleted);
+        Equal(0, service.DeleteMany(new string[] { first.Id }).Count);
+
+        service.UndoDeleteMany(deleted);
+        RoostData reloaded = new TodoRepository(path).Load();
+        Equal(0, reloaded.Todos.FindAll(delegate(TodoItem item) { return item.IsDeleted; }).Count);
+        True(reloaded.Todos.Find(delegate(TodoItem item) { return item.Id == second.Id; }).IsStarred);
+
+        service.StarMany(new string[] { first.Id, third.Id });
+        reloaded = new TodoRepository(path).Load();
+        Equal(3, reloaded.Todos.FindAll(delegate(TodoItem item) { return item.IsStarred; }).Count);
     }
 
     private static void TestFullscreenRules()
