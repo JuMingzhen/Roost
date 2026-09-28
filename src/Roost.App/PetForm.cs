@@ -15,6 +15,8 @@ namespace Roost.App
         private readonly TodoService todos;
         private readonly SpriteView sprite;
         private readonly Panel listPanel;
+        private readonly FloatingWindow listWindow;
+        private readonly FloatingWindow bubbleWindow;
         private readonly FlowLayoutPanel rows;
         private readonly CheckBox onlyToday;
         private readonly Button moreButton;
@@ -53,7 +55,10 @@ namespace Roost.App
 
         internal int AnimationFrameCountForTest { get { return sprite.FrameCount; } }
         internal Rectangle SpriteBoundsForTest { get { return sprite.Bounds; } }
-        internal Rectangle ListBoundsForTest { get { return listPanel.Bounds; } }
+        internal Rectangle ListBoundsForTest { get { return listWindow.Visible ? new Rectangle(listWindow.Left - Left, listWindow.Top - Top, listWindow.Width, listWindow.Height) : Rectangle.Empty; } }
+        internal Control ListPanelForTest { get { return listPanel; } }
+        internal Form ListWindowForTest { get { return listWindow; } }
+        internal bool ListRoundedForTest { get { return listWindow.RoundedForTest; } }
         internal bool HotKeyRegisteredForTest { get { return hotKeyRegistered; } }
         internal bool TalkHotKeyRegisteredForTest { get { return talkHotKeyRegistered; } }
         internal bool TrayIconCustomForTest { get { return trayIconHandle != IntPtr.Zero; } }
@@ -99,8 +104,12 @@ namespace Roost.App
             get { return new string[] { showHideItem.Text, "设置", "退出" }; }
         }
 
+        // 点在 Roost 的任一窗口上（宠物、清单或气泡）时为 true；坐标相对宠物窗口。
         internal bool HitTestForTest(Point clientPoint)
         {
+            Point screen = new Point(Left + clientPoint.X, Top + clientPoint.Y);
+            if (listWindow.Visible && listWindow.Bounds.Contains(screen)) return true;
+            if (bubbleWindow.Visible && bubbleWindow.Bounds.Contains(screen)) return true;
             return Region != null && Region.IsVisible(clientPoint);
         }
 
@@ -194,9 +203,9 @@ namespace Roost.App
             listPanel.Controls.AddRange(new Control[] { heading, settingsButton, add, talkBox, talkButton, onlyToday, rows, moreButton, undoPanel });
             bubble = new BubbleView { Font = Font };
             bubble.Dismissed += delegate { bubbleTimer.Stop(); bubbleSize = Size.Empty; ApplyLayout(); };
-            Controls.Add(bubble);
+            bubbleWindow = new FloatingWindow(bubble, NativeMethods.DWMWCP_ROUNDSMALL) { Owner = this };
             DpiScale.Apply(listPanel);
-            Controls.Add(listPanel);
+            listWindow = new FloatingWindow(listPanel, NativeMethods.DWMWCP_ROUND) { Owner = this };
             Controls.Add(sprite);
 
             ContextMenuStrip menu = new ContextMenuStrip();
@@ -243,7 +252,7 @@ namespace Roost.App
             ApplyLayout();
             RefreshList();
             UpdateTalkState();
-            Opacity = LayoutRules.ClampOpacity(todos.Data.Settings.Opacity);
+            ApplyOpacity();
             fullscreenTimer.Start();
             SystemEvents.SessionSwitch += SessionSwitch;
         }
@@ -297,6 +306,8 @@ namespace Roost.App
                 return;
             }
             fullscreenTimer.Stop();
+            listWindow.Close();
+            bubbleWindow.Close();
             tray.Visible = false;
             if (trayIconHandle != IntPtr.Zero) NativeMethods.DestroyIcon(trayIconHandle);
             SystemEvents.SessionSwitch -= SessionSwitch;
@@ -364,21 +375,37 @@ namespace Roost.App
             PetLayout layout = LayoutRules.Compute(petAnchor, new Size(size, size), DpiScale.Px(ListSize), bubbleSize, screen.WorkingArea, todos.Data.Settings.ListVisible, DpiScale.Px(8));
             Bounds = layout.WindowBounds;
             sprite.Bounds = layout.PetBounds;
-            listPanel.Bounds = layout.ListBounds;
-            listPanel.Visible = todos.Data.Settings.ListVisible;
-            if (!layout.BubbleBounds.IsEmpty)
-            {
-                bubble.Bounds = layout.BubbleBounds;
-                bubble.BringToFront();
-            }
             ApplyHitRegion();
+            PlaceFloating(listWindow, layout.ListBounds, todos.Data.Settings.ListVisible);
+            PlaceFloating(bubbleWindow, layout.BubbleBounds, bubble.Open && !layout.BubbleBounds.IsEmpty);
+        }
+
+        // 清单和气泡窗口跟随宠物窗口；宠物窗口隐藏时一起隐藏。
+        private void PlaceFloating(FloatingWindow window, Rectangle relative, bool wanted)
+        {
+            if (!relative.IsEmpty) window.Bounds = new Rectangle(Left + relative.X, Top + relative.Y, relative.Width, relative.Height);
+            bool show = wanted && Visible;
+            if (show && !window.Visible) window.Show(this);
+            else if (!show && window.Visible) window.Hide();
+        }
+
+        protected override void OnVisibleChanged(EventArgs e)
+        {
+            base.OnVisibleChanged(e);
+            if (listWindow != null) ApplyLayout();
+        }
+
+        private void ApplyOpacity()
+        {
+            double opacity = LayoutRules.ClampOpacity(todos.Data.Settings.Opacity);
+            Opacity = opacity;
+            listWindow.Opacity = opacity;
+            bubbleWindow.Opacity = opacity;
         }
 
         private void ApplyHitRegion()
         {
             Region hit = sprite.CreateHitRegion(sprite.Bounds);
-            if (listPanel.Visible) hit.Union(listPanel.Bounds);
-            if (bubble.Visible) hit.Union(bubble.Bounds);
             Region previous = Region;
             Region = hit;
             if (previous != null) previous.Dispose();
@@ -569,8 +596,8 @@ namespace Roost.App
                 todos.SaveSettings();
                 ApplyLayout();
             }
-            NativeMethods.SetForegroundWindow(Handle);
-            Activate();
+            NativeMethods.SetForegroundWindow(listWindow.Handle);
+            listWindow.Activate();
             talkBox.Focus();
             talkBox.SelectAll();
             if (!AiReady()) PromptConfigureAi();
@@ -727,7 +754,7 @@ namespace Roost.App
             settingsForm.SettingsSaved += delegate
             {
                 todos.SaveSettings();
-                Opacity = LayoutRules.ClampOpacity(todos.Data.Settings.Opacity);
+                ApplyOpacity();
                 ApplyLayout();
                 RefreshList();
                 UpdateTalkState();
@@ -786,7 +813,7 @@ namespace Roost.App
         private bool IsForegroundFullscreen()
         {
             IntPtr foreground = NativeMethods.GetForegroundWindow();
-            if (foreground == IntPtr.Zero || foreground == Handle) return false;
+            if (foreground == IntPtr.Zero || foreground == Handle || foreground == listWindow.Handle || foreground == bubbleWindow.Handle) return false;
             NativeMethods.RECT window;
             if (!NativeMethods.GetWindowRect(foreground, out window)) return false;
             IntPtr monitor = NativeMethods.MonitorFromWindow(foreground, NativeMethods.MONITOR_DEFAULTTONEAREST);

@@ -15,6 +15,10 @@ namespace Roost.App
         internal const uint MOD_CONTROL = 0x0002;
         internal const uint MOD_ALT = 0x0001;
         internal const uint MONITOR_DEFAULTTONEAREST = 2;
+        internal const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        internal const int DWMWA_BORDER_COLOR = 34;
+        internal const int DWMWCP_ROUND = 2;
+        internal const int DWMWCP_ROUNDSMALL = 3;
         internal static readonly IntPtr HWND_BROADCAST = new IntPtr(0xffff);
 
         [StructLayout(LayoutKind.Sequential)]
@@ -84,6 +88,10 @@ namespace Roost.App
 
         [DllImport("user32.dll", SetLastError = true)]
         internal static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+
+        // Windows 11 起可用；Windows 10 上返回错误码，窗口保持直角。
+        [DllImport("dwmapi.dll")]
+        internal static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
 
         [DllImport("user32.dll", EntryPoint = "SendMessageW")]
         internal static extern IntPtr SendMessageForTest(IntPtr window, int message, IntPtr wParam, IntPtr lParam);

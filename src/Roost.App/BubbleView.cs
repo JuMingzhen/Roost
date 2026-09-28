@@ -12,6 +12,8 @@ namespace Roost.App
         private readonly Button close;
         private readonly LinkLabel action;
         private Action actionHandler;
+        // 气泡放在独立窗口里，窗口隐藏时 Visible 也会变成 false，所以另记是否正在显示。
+        private bool open;
 
         internal event EventHandler Dismissed;
 
@@ -34,7 +36,9 @@ namespace Roost.App
             Controls.AddRange(new Control[] { text, close, action });
         }
 
-        internal string MessageForTest { get { return Visible ? text.Text : null; } }
+        internal bool Open { get { return open; } }
+
+        internal string MessageForTest { get { return open ? text.Text : null; } }
 
         internal Size Show(string message, string actionText, Action onAction)
         {
@@ -53,13 +57,15 @@ namespace Roost.App
                 action.Location = new Point(DpiScale.Px(10), text.Bottom + DpiScale.Px(2));
                 height = action.Bottom + DpiScale.Px(8);
             }
+            open = true;
             Visible = true;
             return new Size(width, Math.Max(DpiScale.Px(40), height));
         }
 
         internal void Dismiss()
         {
-            if (!Visible) return;
+            if (!open) return;
+            open = false;
             Visible = false;
             actionHandler = null;
             EventHandler handler = Dismissed;

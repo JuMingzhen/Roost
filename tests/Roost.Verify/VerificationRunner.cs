@@ -83,6 +83,8 @@ internal static class VerificationRunner
         TodoService service = new TodoService(new TodoRepository(Path.Combine(root, "data.json")));
         service.Data.Settings.FirstRunCompleted = true;
         service.Data.Settings.ListVisible = true;
+        // 低于 100% 的透明度会让窗口变成分层窗口，圆角和点击穿透要在这种情况下也成立。
+        service.Data.Settings.Opacity = 0.85;
         service.SaveSettings();
         string assets = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "cat");
         uint message = NativeMethods.RegisterWindowMessage("Roost.Verify." + Guid.NewGuid().ToString("N"));
@@ -93,6 +95,8 @@ internal static class VerificationRunner
         pet.Show();
         pet.BringToFront();
         Pump(500);
+        List<string> cornerColors = new List<string>();
+        bool listCornersRounded = ListCornersRounded(pet, sink.BackColor, Path.ChangeExtension(outputPath, ".corner.png"), cornerColors);
 
         List<Point> blank = FindPoints(pet, false, 12);
         foreach (Point point in blank)
@@ -120,7 +124,7 @@ internal static class VerificationRunner
         bool visibleBeforeHotkey = pet.Visible;
         NativeMethods.SendMessageForTest(pet.Handle, NativeMethods.WM_HOTKEY, new IntPtr(NativeMethods.HOTKEY_ID), IntPtr.Zero);
         Pump(100);
-        bool hiddenByHotkey = visibleBeforeHotkey && !pet.Visible;
+        bool hiddenByHotkey = visibleBeforeHotkey && !pet.Visible && !pet.ListWindowForTest.Visible;
         int frameBefore = pet.AnimationFrameCountForTest;
         Pump(400);
         bool pausedWhileHidden = pet.AnimationFrameCountForTest == frameBefore;
@@ -131,7 +135,7 @@ internal static class VerificationRunner
         pet.EvaluateFullscreenForTest(false);
         bool restoredAfterFullscreen = pet.Visible;
 
-        bool pass = blank.Count == 12 && blankClicks == 12 && petClickHandled && trayLabels && settingsEntries &&
+        bool pass = blank.Count == 12 && blankClicks == 12 && petClickHandled && trayLabels && settingsEntries && listCornersRounded &&
                     pet.HotKeyRegisteredForTest && hiddenByHotkey && pausedWhileHidden && hiddenByFullscreen && restoredAfterFullscreen;
         Dictionary<string, object> result = Base("system");
         result["actualScalePercent"] = GetScalePercent(pet);
@@ -142,6 +146,8 @@ internal static class VerificationRunner
         result["settingsOpensFromListButton"] = settingsFromList;
         result["petRightClickMenuHasSettings"] = pet.PetMenuHasSettingsForTest;
         result["trayIconIsCat"] = pet.TrayIconCustomForTest;
+        result["listCornersRounded"] = listCornersRounded;
+        result["listCornerColors"] = cornerColors.ToArray();
         result["globalHotkeyRegistered"] = pet.HotKeyRegisteredForTest;
         result["hotkeyHandlerHides"] = hiddenByHotkey;
         result["animationPausedWhileHidden"] = pausedWhileHidden;
@@ -581,10 +587,10 @@ internal static class VerificationRunner
         pet.Show();
         pet.DisableFullscreenDetectionForTest();
         Pump(300);
-        foreach (Control control in pet.Controls)
-            if (control is Panel && control.Visible && !(control is BubbleView)) CheckLayout(control, "清单", problems);
-        Capture(pet, Path.Combine(screenshotDirectory, "list.png"));
+        CheckLayout(pet.ListPanelForTest, "清单", problems);
+        Capture(pet.ListPanelForTest, Path.Combine(screenshotDirectory, "list.png"));
         checkedForms.Add("清单");
+
         pet.CloseForTest();
 
         foreach (string problem in problems) Console.Error.WriteLine(problem);
@@ -675,6 +681,36 @@ internal static class VerificationRunner
         text = text.Replace("\r", " ").Replace("\n", " ");
         if (text.Length > 12) text = text.Substring(0, 12) + "…";
         return control.GetType().Name + (text.Length > 0 ? "「" + text + "」" : string.Empty);
+    }
+
+    // 清单窗口的四个角在屏幕上应露出下层的测试窗口（系统圆角生效）。左上角截图留作证据。
+    private static bool ListCornersRounded(PetForm pet, Color underlying, string screenshotPath, List<string> cornerColors)
+    {
+        Form list = pet.ListWindowForTest;
+        Point[] corners = new Point[]
+        {
+            new Point(list.Left, list.Top), new Point(list.Right - 1, list.Top),
+            new Point(list.Left, list.Bottom - 1), new Point(list.Right - 1, list.Bottom - 1)
+        };
+        bool pass = pet.ListRoundedForTest && list.Visible;
+        using (Bitmap pixel = new Bitmap(1, 1))
+        using (Graphics graphics = Graphics.FromImage(pixel))
+        {
+            foreach (Point corner in corners)
+            {
+                graphics.CopyFromScreen(corner, Point.Empty, new Size(1, 1));
+                Color color = pixel.GetPixel(0, 0);
+                cornerColors.Add(string.Format("#{0:X2}{1:X2}{2:X2}", color.R, color.G, color.B));
+                // 系统阴影会把角上露出的下层颜色压暗几级，所以按容差比较。
+                if (Math.Abs(color.R - underlying.R) > 24 || Math.Abs(color.G - underlying.G) > 24 || Math.Abs(color.B - underlying.B) > 24) pass = false;
+            }
+        }
+        using (Bitmap shot = new Bitmap(48, 48))
+        {
+            using (Graphics graphics = Graphics.FromImage(shot)) graphics.CopyFromScreen(new Point(list.Left - 8, list.Top - 8), Point.Empty, shot.Size);
+            shot.Save(screenshotPath, ImageFormat.Png);
+        }
+        return pass;
     }
 
     private static List<Point> FindPoints(PetForm form, bool visible, int count)

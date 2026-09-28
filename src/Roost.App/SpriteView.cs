@@ -24,6 +24,8 @@ namespace Roost.App
         private readonly Timer timer;
         private PetState state;
         private int frame;
+        // 动画定时器触发的总次数，只增不减（frame 在切换状态时会归零）。
+        private int ticks;
         private bool paused;
 
         internal SpriteView(string assetRoot)
@@ -43,7 +45,7 @@ namespace Roost.App
             state = PetState.Idle;
             timer = new Timer();
             timer.Interval = 125;
-            timer.Tick += delegate { frame++; Invalidate(); };
+            timer.Tick += delegate { frame++; ticks++; Invalidate(); };
             timer.Start();
         }
 
@@ -69,7 +71,7 @@ namespace Roost.App
             }
         }
 
-        internal int FrameCount { get { return frame; } }
+        internal int FrameCount { get { return ticks; } }
 
         internal Bitmap RenderForTest(PetState value, Size target)
         {
