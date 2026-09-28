@@ -580,6 +580,8 @@ internal static class VerificationRunner
         TodoService service = new TodoService(new TodoRepository(Path.Combine(root, "data.json")));
         service.Create("虚构待办：给植物浇水", null, "2026-09-24", "09:00", true);
         service.Create("虚构待办：买牙膏", null, null, null, false);
+        foreach (string title in new[] { "虚构待办：一个很长很长的标题用来检查截断是否正常显示", "虚构待办：还书", "虚构待办：订机票", "虚构待办：整理相册", "虚构待办：预约牙医" })
+            service.Create(title, null, DateTime.Today.ToString("yyyy-MM-dd"), null, false);
         service.Data.Settings.FirstRunCompleted = true;
         service.Data.Settings.ListVisible = true;
         service.SaveSettings();
@@ -591,6 +593,25 @@ internal static class VerificationRunner
         Capture(pet.ListPanelForTest, Path.Combine(screenshotDirectory, "list.png"));
         checkedForms.Add("清单");
 
+        // 编辑模式：全选后批量删除，出现撤销条；撤销后整批恢复。
+        pet.SetEditingForTest(true);
+        pet.SelectAllForTest();
+        Pump(100);
+        CheckLayout(pet.ListPanelForTest, "清单（编辑模式）", problems);
+        Capture(pet.ListPanelForTest, Path.Combine(screenshotDirectory, "list-editing.png"));
+        checkedForms.Add("清单（编辑模式）");
+        pet.DeleteSelectedForTest();
+        Pump(100);
+        int remaining = service.Data.Todos.FindAll(delegate(TodoItem item) { return !item.IsDeleted; }).Count;
+        if (pet.EditingForTest || remaining != 0 || !pet.UndoVisibleForTest || pet.UndoLabelForTest != "已删除 7 条")
+            problems.Add("清单编辑模式批量删除结果不对：剩余 " + remaining + " 条，撤销条「" + pet.UndoLabelForTest + "」");
+        CheckLayout(pet.ListPanelForTest, "清单（撤销条）", problems);
+        Capture(pet.ListPanelForTest, Path.Combine(screenshotDirectory, "list-undo.png"));
+        checkedForms.Add("清单（撤销条）");
+        pet.RunUndoForTest();
+        Pump(100);
+        remaining = service.Data.Todos.FindAll(delegate(TodoItem item) { return !item.IsDeleted; }).Count;
+        if (remaining != 7 || pet.UndoVisibleForTest) problems.Add("清单批量删除撤销后应恢复 7 条，实际 " + remaining + " 条");
         pet.CloseForTest();
 
         foreach (string problem in problems) Console.Error.WriteLine(problem);

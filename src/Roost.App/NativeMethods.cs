@@ -93,6 +93,16 @@ namespace Roost.App
         [DllImport("dwmapi.dll")]
         internal static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
 
+        [DllImport("user32.dll", EntryPoint = "SendMessageW", CharSet = CharSet.Unicode)]
+        private static extern IntPtr SendMessageString(IntPtr window, int message, IntPtr wParam, string lParam);
+
+        // 输入框为空时显示的灰色提示文字（EM_SETCUEBANNER），获得焦点后仍显示。
+        internal static void SetCueBanner(IntPtr textBox, string text)
+        {
+            const int EM_SETCUEBANNER = 0x1501;
+            SendMessageString(textBox, EM_SETCUEBANNER, new IntPtr(1), text);
+        }
+
         [DllImport("user32.dll", EntryPoint = "SendMessageW")]
         internal static extern IntPtr SendMessageForTest(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     }

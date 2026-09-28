@@ -18,17 +18,27 @@ namespace Roost.App
         private readonly FloatingWindow listWindow;
         private readonly FloatingWindow bubbleWindow;
         private readonly FlowLayoutPanel rows;
-        private readonly CheckBox onlyToday;
-        private readonly Button moreButton;
-        private readonly Panel undoPanel;
+        private readonly Label heading;
+        private readonly Label countLabel;
+        private readonly RoundButton editButton;
+        private readonly RoundButton addButton;
+        private readonly RoundButton selectAllButton;
+        private readonly RoundButton doneButton;
+        private readonly TextField talkField;
+        private readonly SegmentedControl filter;
+        private readonly RoundButton moreButton;
+        private readonly CardPanel undoPanel;
         private readonly Label undoLabel;
-        private readonly Button undoButton;
+        private readonly RoundButton undoButton;
+        private readonly Panel editBar;
+        private readonly RoundButton starSelectedButton;
+        private readonly RoundButton deleteSelectedButton;
         private readonly TextBox talkBox;
-        private readonly Button talkButton;
+        private readonly RoundButton talkButton;
         private readonly BubbleView bubble;
         private readonly Timer bubbleTimer;
         private readonly NotifyIcon tray;
-        private readonly Button settingsButton;
+        private readonly RoundButton settingsButton;
         private readonly IntPtr trayIconHandle;
         private readonly ToolStripMenuItem showHideItem;
         private readonly Timer fullscreenTimer;
@@ -51,7 +61,15 @@ namespace Roost.App
         private bool hovering;
         private bool celebrating;
         private System.Threading.CancellationTokenSource talkCancel;
-        private static readonly Size ListSize = new Size(348, 476);
+        private bool editing;
+        // 清单窗口未显示时子控件的 Visible 读出来都是 false，所以显示状态另外记。
+        private bool moreShown;
+        private bool undoShown;
+        private readonly HashSet<string> selectedIds = new HashSet<string>();
+        private int listHeight;
+        private const int ListWidth = 340;
+        private const int ListPadding = 14;
+        private const int MaxRowsHeight = 420;
 
         internal int AnimationFrameCountForTest { get { return sprite.FrameCount; } }
         internal Rectangle SpriteBoundsForTest { get { return sprite.Bounds; } }
@@ -80,8 +98,29 @@ namespace Roost.App
         internal PetState PetStateForTest { get { return sprite.State; } }
         internal bool ThinkingForTest { get { return talkCancel != null; } }
         internal string TalkTextForTest { get { return talkBox.Text; } }
-        internal bool UndoVisibleForTest { get { return undoPanel.Visible; } }
+        internal bool UndoVisibleForTest { get { return undoShown; } }
         internal string UndoLabelForTest { get { return undoLabel.Text; } }
+        internal bool EditingForTest { get { return editing; } }
+
+        internal void SetEditingForTest(bool value)
+        {
+            if (value) EnterEditMode(); else ExitEditMode();
+        }
+
+        internal void SelectAllForTest()
+        {
+            ToggleSelectAll();
+        }
+
+        internal void DeleteSelectedForTest()
+        {
+            DeleteSelected();
+        }
+
+        internal void StarSelectedForTest()
+        {
+            StarSelected();
+        }
 
         internal void SendTalkForTest(string text)
         {
@@ -157,22 +196,27 @@ namespace Roost.App
             sprite.MouseEnter += delegate { hovering = true; UpdatePetState(); };
             sprite.MouseLeave += delegate { hovering = false; UpdatePetState(); };
 
-            listPanel = new Panel { BackColor = Color.FromArgb(250, 246, 239), Padding = new Padding(12) };
-            Label heading = new Label { Text = "今天要做", Location = new Point(14, 12), Size = new Size(120, 26), Font = new Font(Font.FontFamily, 11F, FontStyle.Bold) };
-            Button add = new Button { Text = "+", Location = new Point(294, 8), Size = new Size(40, 34), FlatStyle = FlatStyle.Flat };
-            add.FlatAppearance.BorderSize = 0;
-            add.Click += delegate { OpenEditor(null); };
-            settingsButton = new Button { Text = "⚙", Location = new Point(250, 8), Size = new Size(40, 34), FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI Symbol", 12F), ForeColor = Color.DimGray };
-            settingsButton.FlatAppearance.BorderSize = 0;
+            // 清单按效果图重做：尺寸按 100% 缩放写在 LayoutList 里，用 DpiScale.Px 换成物理像素。
+            listPanel = new Panel { BackColor = Theme.Paper, Font = Theme.Body };
+            heading = new Label { Text = "今天要做", Font = Theme.ListTitle, ForeColor = Theme.Text, BackColor = Theme.Paper, AutoEllipsis = true };
+            countLabel = new Label { Font = Theme.Caption, ForeColor = Theme.TextMuted, BackColor = Theme.Paper, AutoEllipsis = true };
+            editButton = new RoundButton("编辑", ButtonKind.Ghost) { Glyph = Theme.Icons.Edit };
+            editButton.Click += delegate { EnterEditMode(); };
+            settingsButton = new RoundButton(string.Empty, ButtonKind.Ghost) { Glyph = Theme.Icons.Settings, AccessibleName = "设置" };
             settingsButton.Click += delegate { OpenSettings(); };
-            new ToolTip().SetToolTip(settingsButton, "设置");
-            onlyToday = new CheckBox { Text = "只显示今日", Location = new Point(14, 80), AutoSize = true, Checked = todos.Data.Settings.OnlyToday };
-            onlyToday.CheckedChanged += delegate
-            {
-                todos.Data.Settings.OnlyToday = onlyToday.Checked;
-                SaveSettingsAndRefresh();
-            };
-            talkBox = new TextBox { Location = new Point(14, 45), Size = new Size(260, 28) };
+            addButton = new RoundButton(string.Empty, ButtonKind.Primary) { Glyph = Theme.Icons.Add, Pill = true, AccessibleName = "新建待办" };
+            addButton.Click += delegate { OpenEditor(null); };
+            ToolTip tips = new ToolTip();
+            tips.SetToolTip(settingsButton, "设置");
+            tips.SetToolTip(addButton, "新建待办");
+            tips.SetToolTip(editButton, "多选删除或加星标");
+            selectAllButton = new RoundButton("全选", ButtonKind.Ghost) { Visible = false };
+            selectAllButton.Click += delegate { ToggleSelectAll(); };
+            doneButton = new RoundButton("完成", ButtonKind.Soft) { Visible = false, Font = Theme.BodyBold };
+            doneButton.Click += delegate { ExitEditMode(); };
+
+            talkField = new TextField { Pill = true, PaddingLeft = 16, PaddingRight = 42 };
+            talkBox = talkField.Box;
             talkBox.KeyDown += delegate(object sender, KeyEventArgs e)
             {
                 if (e.KeyCode != Keys.Enter) return;
@@ -180,32 +224,49 @@ namespace Roost.App
                 if (talkCancel == null) SendTalk();
             };
             talkBox.MouseDown += delegate { if (!AiReady()) PromptConfigureAi(); };
-            talkButton = new Button { Text = "发送", Location = new Point(280, 43), Size = new Size(54, 30), FlatStyle = FlatStyle.Flat };
-            talkButton.FlatAppearance.BorderColor = Color.Silver;
+            talkBox.HandleCreated += delegate { NativeMethods.SetCueBanner(talkBox.Handle, "跟小猫说一句（Ctrl+Alt+空格）"); };
+            talkButton = new RoundButton(string.Empty, ButtonKind.Soft) { Glyph = Theme.Icons.Send, Pill = true, AccessibleName = "发送", TabStop = false };
             talkButton.Click += delegate
             {
                 if (talkCancel != null) talkCancel.Cancel();
                 else SendTalk();
             };
-            rows = new FlowLayoutPanel { Location = new Point(14, 108), Size = new Size(320, 322), FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
-            moreButton = new Button { Location = new Point(14, 434), Size = new Size(320, 28), FlatStyle = FlatStyle.Flat, Visible = false };
-            moreButton.FlatAppearance.BorderSize = 0;
+            talkField.Controls.Add(talkButton);
+
+            filter = new SegmentedControl("全部", "只显示今日");
+            filter.SelectedIndex = todos.Data.Settings.OnlyToday ? 1 : 0;
+            filter.SelectedIndexChanged += delegate
+            {
+                todos.Data.Settings.OnlyToday = filter.SelectedIndex == 1;
+                SaveSettingsAndRefresh();
+            };
+            rows = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Theme.Paper, Margin = Padding.Empty };
+            moreButton = new RoundButton(string.Empty, ButtonKind.Ghost) { Visible = false, Font = Theme.Caption };
             moreButton.Click += delegate
             {
                 todos.Data.Settings.ListExpanded = !todos.Data.Settings.ListExpanded;
                 SaveSettingsAndRefresh();
             };
-            undoPanel = new Panel { Location = new Point(14, 428), Size = new Size(320, 38), BackColor = Color.FromArgb(60, 60, 60), Visible = false };
-            undoLabel = new Label { Text = "已删除", ForeColor = Color.White, Location = new Point(12, 9), AutoSize = true };
-            undoButton = new Button { Text = "撤销", Location = new Point(196, 4), Size = new Size(112, 30), FlatStyle = FlatStyle.Flat, ForeColor = Color.White };
+            undoPanel = new CardPanel { BackColor = Theme.Toast, BorderColor = Theme.Toast, Pill = true, Visible = false };
+            undoLabel = new Label { Text = "已删除", ForeColor = Color.White, BackColor = Theme.Toast, Font = Theme.Caption, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
+            undoButton = new RoundButton("撤销", ButtonKind.Toast) { Pill = true, Font = Theme.CaptionBold };
             undoButton.Click += delegate { RunUndo(); };
             undoPanel.Controls.AddRange(new Control[] { undoLabel, undoButton });
-            listPanel.Controls.AddRange(new Control[] { heading, settingsButton, add, talkBox, talkButton, onlyToday, rows, moreButton, undoPanel });
+            editBar = new Panel { BackColor = Theme.Paper, Visible = false };
+            starSelectedButton = new RoundButton("加星标", ButtonKind.Secondary) { Glyph = Theme.Icons.StarFilled, GlyphColor = Theme.Star };
+            starSelectedButton.Click += delegate { StarSelected(); };
+            deleteSelectedButton = new RoundButton("删除", ButtonKind.DangerFilled) { Glyph = Theme.Icons.Delete };
+            deleteSelectedButton.Click += delegate { DeleteSelected(); };
+            editBar.Controls.AddRange(new Control[] { starSelectedButton, deleteSelectedButton });
+            listPanel.Controls.AddRange(new Control[] { heading, countLabel, editButton, settingsButton, addButton, selectAllButton, doneButton, talkField, filter, rows, moreButton, editBar, undoPanel });
             bubble = new BubbleView { Font = Font };
             bubble.Dismissed += delegate { bubbleTimer.Stop(); bubbleSize = Size.Empty; ApplyLayout(); };
             bubbleWindow = new FloatingWindow(bubble, NativeMethods.DWMWCP_ROUNDSMALL) { Owner = this };
-            DpiScale.Apply(listPanel);
-            listWindow = new FloatingWindow(listPanel, NativeMethods.DWMWCP_ROUND) { Owner = this };
+            listWindow = new FloatingWindow(listPanel, NativeMethods.DWMWCP_ROUND) { Owner = this, KeyPreview = true };
+            listWindow.KeyDown += delegate(object sender, KeyEventArgs e)
+            {
+                if (e.KeyCode == Keys.Escape && editing) ExitEditMode();
+            };
             Controls.Add(sprite);
 
             ContextMenuStrip menu = new ContextMenuStrip();
@@ -372,7 +433,7 @@ namespace Roost.App
             int size = PetSize();
             Screen screen = Screen.FromPoint(petAnchor);
             petAnchor = LayoutRules.RecoverPetPosition(petAnchor, new Size(size, size), screen.WorkingArea);
-            PetLayout layout = LayoutRules.Compute(petAnchor, new Size(size, size), DpiScale.Px(ListSize), bubbleSize, screen.WorkingArea, todos.Data.Settings.ListVisible, DpiScale.Px(8));
+            PetLayout layout = LayoutRules.Compute(petAnchor, new Size(size, size), new Size(DpiScale.Px(ListWidth), listHeight), bubbleSize, screen.WorkingArea, todos.Data.Settings.ListVisible, DpiScale.Px(8));
             Bounds = layout.WindowBounds;
             sprite.Bounds = layout.PetBounds;
             ApplyHitRegion();
@@ -461,9 +522,14 @@ namespace Roost.App
         private void RefreshList()
         {
             rows.SuspendLayout();
+            foreach (Control old in rows.Controls) old.Dispose();
             rows.Controls.Clear();
-            List<TodoItem> sorted = TodoRules.SortAndFilter(todos.Data.Todos, DateTime.Now, todos.Data.Settings.DayStartMinutes, todos.Data.Settings.OnlyToday);
-            VisibleTodoResult visible = TodoRules.VisibleItems(sorted, todos.Data.Settings.ListExpanded, 5);
+            DateTime now = DateTime.Now;
+            int dayStart = todos.Data.Settings.DayStartMinutes;
+            List<TodoItem> sorted = TodoRules.SortAndFilter(todos.Data.Todos, now, dayStart, todos.Data.Settings.OnlyToday);
+            // 编辑模式展开全部，方便一次选完。
+            VisibleTodoResult visible = TodoRules.VisibleItems(sorted, editing || todos.Data.Settings.ListExpanded, 5);
+            selectedIds.RemoveWhere(delegate(string id) { return !sorted.Exists(delegate(TodoItem item) { return item.Id == id; }); });
             if (visible.Items.Count == 0)
             {
                 Label empty = new Label
@@ -471,34 +537,197 @@ namespace Roost.App
                     Text = todos.Data.Todos.Count == 0
                         ? "清单还是空的。\r\n点右上角「+」新建待办；\r\n点宠物可以折叠清单；\r\nAI 配置入口在设置中。"
                         : "这个筛选下没有待办。",
-                    Size = new Size(300, 110),
-                    ForeColor = Color.DimGray,
-                    TextAlign = ContentAlignment.MiddleCenter
+                    Size = new Size(TodoRowControl.RowWidth, 110),
+                    ForeColor = Theme.TextMuted,
+                    BackColor = Theme.Paper,
+                    Font = Theme.Body,
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    Margin = Padding.Empty
                 };
                 DpiScale.Apply(empty);
                 rows.Controls.Add(empty);
             }
             foreach (TodoItem item in visible.Items)
             {
-                TodoRowControl row = new TodoRowControl(item, TodoRules.TimeLabel(item, DateTime.Now, todos.Data.Settings.DayStartMinutes));
+                TodoRowControl row = new TodoRowControl(item, TodoRules.TimeLabel(item, now, dayStart), editing, selectedIds.Contains(item.Id));
                 row.EditRequested += delegate(TodoItem value) { OpenEditor(value); };
                 row.StarRequested += delegate(TodoItem value) { todos.ToggleStarred(value.Id); RefreshList(); };
                 row.CompleteRequested += delegate(TodoItem value) { ToggleComplete(value, row); };
-                row.DeleteRequested += delegate(TodoItem value) { Delete(value); };
+                row.SelectionChanged += delegate(TodoItem value)
+                {
+                    if (row.IsSelected) selectedIds.Add(value.Id); else selectedIds.Remove(value.Id);
+                    UpdateEditHeader();
+                };
                 DpiScale.Apply(row);
+                row.Margin = new Padding(0, 0, 0, DpiScale.Px(6));
                 rows.Controls.Add(row);
             }
-            moreButton.Visible = visible.HiddenCount > 0 || (todos.Data.Settings.ListExpanded && sorted.Count > 5);
-            moreButton.Text = todos.Data.Settings.ListExpanded ? "收起" : string.Format("还有 {0} 条", visible.HiddenCount);
-            moreButton.BringToFront();
             rows.ResumeLayout();
+
+            int open = 0, overdue = 0;
+            foreach (TodoItem item in todos.Data.Todos)
+            {
+                if (item.IsDeleted || item.IsCompleted) continue;
+                open++;
+                if (TodoRowControl.TimeColor(TodoRules.TimeLabel(item, now, dayStart)) == Theme.Danger) overdue++;
+            }
+            countLabel.Text = open == 0 ? "没有未完成的待办" : (overdue == 0 ? string.Format("{0} 项未完成", open) : string.Format("{0} 项未完成 · {1} 项已过期", open, overdue));
+            countLabel.ForeColor = overdue > 0 ? Theme.Danger : Theme.TextMuted;
+            editButton.Enabled = sorted.Count > 0;
+            moreShown = !editing && (visible.HiddenCount > 0 || (todos.Data.Settings.ListExpanded && sorted.Count > 5));
+            moreButton.Visible = moreShown;
+            moreButton.Text = todos.Data.Settings.ListExpanded ? "收起" : string.Format("还有 {0} 条", visible.HiddenCount);
+            moreButton.Glyph = todos.Data.Settings.ListExpanded ? Theme.Icons.ChevronUp : Theme.Icons.ChevronDown;
+            UpdateEditHeader();
+            LayoutList();
+        }
+
+        // 按当前状态排好清单里的各块，算出清单高度（物理像素），再重排窗口。
+        private void LayoutList()
+        {
+            int pad = DpiScale.Px(ListPadding);
+            int width = DpiScale.Px(ListWidth);
+            int inner = width - 2 * pad;
+            int right = width - pad;
+            int y = DpiScale.Px(14);
+
+            heading.Bounds = new Rectangle(pad, y, DpiScale.Px(170), DpiScale.Px(26));
+            countLabel.Bounds = new Rectangle(pad, y + DpiScale.Px(26), DpiScale.Px(172), DpiScale.Px(18));
+            countLabel.Visible = !editing;
+            int buttonTop = y + DpiScale.Px(4);
+            addButton.Bounds = new Rectangle(right - DpiScale.Px(32), buttonTop, DpiScale.Px(32), DpiScale.Px(32));
+            settingsButton.Bounds = new Rectangle(addButton.Left - DpiScale.Px(36), buttonTop, DpiScale.Px(32), DpiScale.Px(32));
+            editButton.Bounds = new Rectangle(settingsButton.Left - DpiScale.Px(70), buttonTop, DpiScale.Px(66), DpiScale.Px(32));
+            doneButton.Bounds = new Rectangle(right - DpiScale.Px(60), buttonTop, DpiScale.Px(60), DpiScale.Px(32));
+            selectAllButton.Bounds = new Rectangle(doneButton.Left - DpiScale.Px(76), buttonTop, DpiScale.Px(72), DpiScale.Px(32));
+            foreach (Control control in new Control[] { editButton, settingsButton, addButton }) control.Visible = !editing;
+            foreach (Control control in new Control[] { selectAllButton, doneButton }) control.Visible = editing;
+            y += DpiScale.Px(editing ? 44 : 54);
+
+            talkField.Visible = !editing;
+            filter.Visible = !editing;
+            if (!editing)
+            {
+                talkField.Bounds = new Rectangle(pad, y, inner, DpiScale.Px(38));
+                talkButton.Bounds = new Rectangle(talkField.Width - DpiScale.Px(34), DpiScale.Px(5), DpiScale.Px(28), DpiScale.Px(28));
+                talkField.LayoutBox();
+                y += DpiScale.Px(38 + 10);
+                filter.Bounds = new Rectangle(pad, y, 1, DpiScale.Px(30));
+                filter.LayoutOptions();
+                y += DpiScale.Px(30 + 10);
+            }
+
+            int content = 0;
+            foreach (Control row in rows.Controls) content += row.Height + row.Margin.Vertical;
+            int maxRows = DpiScale.Px(MaxRowsHeight);
+            bool scroll = content > maxRows;
+            rows.AutoScroll = scroll;
+            int rowWidth = scroll ? inner - SystemInformation.VerticalScrollBarWidth - DpiScale.Px(2) : inner;
+            foreach (Control row in rows.Controls) row.Width = rowWidth;
+            rows.Bounds = new Rectangle(pad, y, inner, Math.Min(content, maxRows));
+            y += rows.Height;
+
+            if (moreShown)
+            {
+                moreButton.Bounds = new Rectangle(pad, y, inner, DpiScale.Px(28));
+                y += DpiScale.Px(28);
+            }
+            editBar.Visible = editing;
+            if (editing)
+            {
+                y += DpiScale.Px(6);
+                editBar.Bounds = new Rectangle(pad, y, inner, DpiScale.Px(36));
+                int half = (inner - DpiScale.Px(8)) / 2;
+                starSelectedButton.Bounds = new Rectangle(0, 0, half, editBar.Height);
+                deleteSelectedButton.Bounds = new Rectangle(inner - half, 0, half, editBar.Height);
+                y += editBar.Height;
+            }
+            if (undoShown)
+            {
+                y += DpiScale.Px(8);
+                undoPanel.Bounds = new Rectangle(pad, y, inner, DpiScale.Px(40));
+                int buttonWidth = TextRenderer.MeasureText(undoButton.Text, undoButton.Font).Width + DpiScale.Px(28);
+                undoButton.Bounds = new Rectangle(undoPanel.Width - buttonWidth - DpiScale.Px(6), DpiScale.Px(6), buttonWidth, DpiScale.Px(28));
+                // 文字块上下内缩，避免方角露出胶囊的圆角。
+                undoLabel.Bounds = new Rectangle(DpiScale.Px(20), DpiScale.Px(8), Math.Max(0, undoButton.Left - DpiScale.Px(28)), undoPanel.Height - DpiScale.Px(16));
+                y += undoPanel.Height;
+            }
+            listHeight = y + DpiScale.Px(14);
+            ApplyLayout();
+        }
+
+        private void EnterEditMode()
+        {
+            if (editing) return;
+            editing = true;
+            selectedIds.Clear();
+            RefreshList();
+        }
+
+        private void ExitEditMode()
+        {
+            if (!editing) return;
+            editing = false;
+            selectedIds.Clear();
+            RefreshList();
+        }
+
+        private void UpdateEditHeader()
+        {
+            if (!editing)
+            {
+                heading.Text = "今天要做";
+                return;
+            }
+            int total = 0;
+            foreach (Control control in rows.Controls) if (control is TodoRowControl) total++;
+            heading.Text = selectedIds.Count == 0 ? "选择待办" : string.Format("已选 {0} 项", selectedIds.Count);
+            selectAllButton.Text = total > 0 && selectedIds.Count == total ? "全不选" : "全选";
+            starSelectedButton.Enabled = selectedIds.Count > 0;
+            deleteSelectedButton.Enabled = selectedIds.Count > 0;
+            deleteSelectedButton.Text = selectedIds.Count == 0 ? "删除" : string.Format("删除 {0} 项", selectedIds.Count);
+        }
+
+        private void ToggleSelectAll()
+        {
+            List<string> all = new List<string>();
+            foreach (Control control in rows.Controls)
+            {
+                TodoRowControl row = control as TodoRowControl;
+                if (row != null) all.Add(row.Item.Id);
+            }
+            bool clear = all.Count > 0 && selectedIds.Count == all.Count;
+            selectedIds.Clear();
+            if (!clear) selectedIds.UnionWith(all);
+            RefreshList();
+        }
+
+        private void DeleteSelected()
+        {
+            if (selectedIds.Count == 0) return;
+            List<string> deleted = todos.DeleteMany(selectedIds);
+            ExitEditMode();
+            ShowUndo(string.Format("已删除 {0} 条", deleted.Count), "撤销", 5000, delegate { todos.UndoDeleteMany(deleted); });
+        }
+
+        private void StarSelected()
+        {
+            if (selectedIds.Count == 0) return;
+            todos.StarMany(selectedIds);
+            ExitEditMode();
         }
 
         private void OpenEditor(TodoItem item)
         {
             using (TodoEditorForm editor = new TodoEditorForm(item))
             {
-                if (editor.ShowDialog(this) != DialogResult.OK) return;
+                DialogResult result = editor.ShowDialog(this);
+                if (result == DialogResult.Abort && item != null)
+                {
+                    Delete(item);
+                    return;
+                }
+                if (result != DialogResult.OK) return;
                 if (item == null)
                     todos.Create(editor.TodoTitle, editor.TodoNotes, editor.TodoDate, editor.TodoTime, editor.TodoStarred);
                 else
@@ -540,8 +769,9 @@ namespace Roost.App
             undoTimer.Stop();
             undoTimer.Interval = milliseconds;
             undoTimer.Start();
+            undoShown = true;
             undoPanel.Visible = true;
-            undoPanel.BringToFront();
+            LayoutList();
         }
 
         private void RunUndo()
@@ -555,8 +785,11 @@ namespace Roost.App
         private void HideUndo()
         {
             undoTimer.Stop();
-            undoPanel.Visible = false;
             pendingUndo = null;
+            if (!undoShown) return;
+            undoShown = false;
+            undoPanel.Visible = false;
+            LayoutList();
         }
 
         private bool AiReady()
@@ -575,10 +808,11 @@ namespace Roost.App
             bool ready = AiReady();
             bool busy = talkCancel != null;
             talkBox.ReadOnly = !ready || busy;
-            talkBox.ForeColor = ready ? SystemColors.WindowText : Color.DimGray;
+            talkBox.ForeColor = ready ? Theme.Text : Theme.TextMuted;
             if (!ready && talkBox.Text.Length == 0) talkBox.Text = "配置模型后可用（点此设置）";
             else if (ready && talkBox.Text == "配置模型后可用（点此设置）") talkBox.Text = string.Empty;
-            talkButton.Text = busy ? "取消" : "发送";
+            talkButton.Glyph = busy ? Theme.Icons.Close : Theme.Icons.Send;
+            talkButton.AccessibleName = busy ? "取消" : "发送";
             talkButton.Enabled = ready;
         }
 

@@ -64,6 +64,9 @@ namespace Roost.App
 
             if (item != null)
             {
+                // 删单条待办在这里（清单行上不放删除按钮，PRD 7.4）。返回 Abort 表示删除。
+                Button delete = new Button { Text = "删除这条", DialogResult = DialogResult.Abort, Location = new Point(22, 326), Size = new Size(96, 34), ForeColor = Theme.Danger };
+                Controls.Add(delete);
                 titleBox.Text = item.Title;
                 notesBox.Text = item.Notes;
                 DateTime date;
