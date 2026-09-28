@@ -538,26 +538,25 @@ internal static class VerificationRunner
         string keyTarget = CredentialStore.ApiKeyTargetFor(settings);
         CredentialStore.Write(keyTarget, "sk-verify-FAKE-ABCD");
         SettingsForm settingsForm = new SettingsForm(settings);
-        TabControl tabs = null;
-        foreach (Control control in settingsForm.Controls) if (control is TabControl) tabs = (TabControl)control;
         ShowOffscreen(settingsForm);
         scale = GetScalePercent(settingsForm);
-        foreach (TabPage page in tabs.TabPages)
+        for (int i = 0; i < settingsForm.PageCountForTest; i++)
         {
-            tabs.SelectedTab = page;
+            string name = "设置/" + settingsForm.PageNameForTest(i);
+            settingsForm.ShowPageForTest(i);
             Pump(50);
-            CheckLayout(page, "设置/" + page.Text, problems);
-            Capture(settingsForm, Path.Combine(screenshotDirectory, "settings-" + tabs.SelectedIndex + ".png"));
-            checkedForms.Add("设置/" + page.Text);
+            CheckLayout(settingsForm, name, problems);
+            Capture(settingsForm, Path.Combine(screenshotDirectory, "settings-" + i + ".png"));
+            checkedForms.Add(name);
         }
-        tabs.SelectedIndex = 2;
+        settingsForm.ShowAiTab();
         bool maskedKeyShown = settingsForm.KeyStatusForTest == "已保存：sk-…ABCD";
-        if (!maskedKeyShown) problems.Add("设置/AI 与自启 已保存 key 的掩码显示不对：" + settingsForm.KeyStatusForTest);
+        if (!maskedKeyShown) problems.Add("设置/AI 模型 已保存 key 的掩码显示不对：" + settingsForm.KeyStatusForTest);
         settingsForm.ShowKeyEditorForTest();
         Pump(50);
-        CheckLayout(tabs.SelectedTab, "设置/AI 与自启（更换 key）", problems);
+        CheckLayout(settingsForm, "设置/AI 模型（更换 key）", problems);
         Capture(settingsForm, Path.Combine(screenshotDirectory, "settings-key-editor.png"));
-        checkedForms.Add("设置/AI 与自启（更换 key）");
+        checkedForms.Add("设置/AI 模型（更换 key）");
         settingsForm.Close();
         CredentialStore.Delete(keyTarget);
 

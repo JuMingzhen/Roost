@@ -1085,7 +1085,7 @@ namespace Roost.App
         {
             DialogResult result = MessageBox.Show(
                 this,
-                "欢迎来到 Roost！\r\n\r\n• 点「+」新建待办\r\n• 点宠物折叠或展开清单\r\n• 托盘菜单里可以打开设置\r\n• 在设置的「AI 与自启」里配置模型后，可以用一句话让宠物改计划；不配置也能完整使用本地待办\r\n\r\n现在打开设置看看吗？",
+                "欢迎来到 Roost！\r\n\r\n• 点「+」新建待办\r\n• 点宠物折叠或展开清单\r\n• 托盘菜单里可以打开设置\r\n• 在设置的「AI 模型」里配置模型后，可以用一句话让宠物改计划；不配置也能完整使用本地待办\r\n\r\n现在打开设置看看吗？",
                 "第一次使用",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Information);
