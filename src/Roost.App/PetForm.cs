@@ -238,6 +238,8 @@ namespace Roost.App
             petAnchor = todos.Data.Settings.HasSavedPosition
                 ? new Point(todos.Data.Settings.PetX, todos.Data.Settings.PetY)
                 : new Point(work.Right - size - DpiScale.Px(24), work.Bottom - size - DpiScale.Px(24));
+            try { CredentialStore.MigrateLegacyApiKey(todos.Data.Settings); }
+            catch (System.ComponentModel.Win32Exception) { }
             ApplyLayout();
             RefreshList();
             UpdateTalkState();
@@ -535,9 +537,9 @@ namespace Roost.App
             return todos.Data.Settings.AiConfigured && !string.IsNullOrEmpty(ReadApiKey());
         }
 
-        private static string ReadApiKey()
+        private string ReadApiKey()
         {
-            try { return CredentialStore.Read(CredentialStore.ApiKeyTarget); }
+            try { return CredentialStore.ReadApiKey(todos.Data.Settings); }
             catch (System.ComponentModel.Win32Exception) { return null; }
         }
 

@@ -332,6 +332,7 @@ internal static class VerificationRunner
         ScriptedModelServer server = new ScriptedModelServer();
         Dictionary<string, object> result = Base("ai");
         PetForm pet = null;
+        string providerTarget = null;
         try
         {
             string root = NewTestDirectory();
@@ -348,6 +349,10 @@ internal static class VerificationRunner
             service.SaveSettings();
             string assets = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "cat");
             pet = new PetForm(service, NativeMethods.RegisterWindowMessage("Roost.Verify.Ai." + Guid.NewGuid().ToString("N")), assets);
+            providerTarget = CredentialStore.ApiKeyTargetFor(service.Data.Settings);
+            bool legacyKeyMigrated = CredentialStore.Read(CredentialStore.ApiKeyTarget) == null &&
+                                     CredentialStore.Read(providerTarget) == "sk-verify-FAKE" &&
+                                     providerTarget.EndsWith("/custom/127.0.0.1");
             pet.Show();
             pet.DisableFullscreenDetectionForTest();
             Pump(300);
@@ -436,7 +441,7 @@ internal static class VerificationRunner
             test.Close();
 
             bool pass = thinkingShown && deleteListedFirst && cancelKeepsData && requestCarriesContext && confirmApplies && undoRestores &&
-                        invalidKey && unclear && ambiguous && serverDown && cancelRequest && failuresKeepData && notConfigured && modelTest;
+                        invalidKey && unclear && ambiguous && serverDown && cancelRequest && failuresKeepData && notConfigured && modelTest && legacyKeyMigrated;
             result["thinkingAnimationWhileWaiting"] = thinkingShown;
             result["deleteListedFirstInPreview"] = deleteListedFirst;
             result["previewAndCancelLeaveDataUnchanged"] = cancelKeepsData;
@@ -451,6 +456,7 @@ internal static class VerificationRunner
             result["failuresLeaveDataUnchanged"] = failuresKeepData;
             result["notConfiguredGuidesToSettings"] = notConfigured;
             result["modelTestRunsOnFictionalTodosOnly"] = modelTest;
+            result["legacyKeyMigratedToProvider"] = legacyKeyMigrated;
             result["overallPass"] = pass;
             result["status"] = pass ? "PASS" : "FAIL";
             WriteJson(outputPath, result);
@@ -461,6 +467,7 @@ internal static class VerificationRunner
             if (pet != null) pet.CloseForTest();
             server.Stop();
             CredentialStore.Delete(credentialTarget);
+            if (providerTarget != null) CredentialStore.Delete(providerTarget);
         }
     }
 

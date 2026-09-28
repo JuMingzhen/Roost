@@ -7,6 +7,7 @@ namespace Roost.Core
 {
     public static class CredentialStore
     {
+        // 早期版本所有厂商共用这一个 key；现在每个厂商各存一份，旧 key 由 MigrateLegacyApiKey 迁移。
         public static string ApiKeyTarget
         {
             get
@@ -14,6 +15,39 @@ namespace Roost.Core
                 string overridden = Environment.GetEnvironmentVariable("ROOST_CREDENTIAL_TARGET");
                 return string.IsNullOrEmpty(overridden) ? "Roost/ApiKey" : overridden;
             }
+        }
+
+        // 预设按预设 id 区分；自定义服务（以及已不在预设列表里的旧预设）按服务地址的主机名区分。
+        public static string ApiKeyTargetFor(string presetId, string baseUrl)
+        {
+            if (!string.IsNullOrEmpty(presetId) && presetId != AiPresets.CustomId && AiPresets.Find(presetId) != null)
+                return ApiKeyTarget + "/" + presetId;
+            Uri uri;
+            string host = Uri.TryCreate((baseUrl ?? string.Empty).Trim(), UriKind.Absolute, out uri) ? uri.Host.ToLowerInvariant() : null;
+            return string.IsNullOrEmpty(host) ? null : ApiKeyTarget + "/custom/" + host;
+        }
+
+        public static string ApiKeyTargetFor(RoostSettings settings)
+        {
+            return ApiKeyTargetFor(settings.AiPresetId, settings.AiBaseUrl);
+        }
+
+        public static string ReadApiKey(RoostSettings settings)
+        {
+            string target = ApiKeyTargetFor(settings);
+            return target == null ? null : Read(target);
+        }
+
+        // 把旧的共用 key 移到当前所选厂商名下；该厂商已经有 key 时不覆盖。返回是否发生了迁移。
+        public static bool MigrateLegacyApiKey(RoostSettings settings)
+        {
+            string legacy = Read(ApiKeyTarget);
+            if (string.IsNullOrEmpty(legacy)) return false;
+            string target = settings.AiConfigured ? ApiKeyTargetFor(settings) : null;
+            if (target == null) return false;
+            if (string.IsNullOrEmpty(Read(target))) Write(target, legacy);
+            Delete(ApiKeyTarget);
+            return true;
         }
         private const int CRED_TYPE_GENERIC = 1;
         private const int CRED_PERSIST_LOCAL_MACHINE = 2;

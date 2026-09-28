@@ -43,6 +43,7 @@ internal static class TestRunner
         Run("AI 超时、取消与断网", TestAiClientTimeoutCancelNetwork);
         Run("AI 模型拒绝 temperature 时去掉该参数重试一次", TestAiClientTemperatureFallback);
         Run("API Key 写入 Windows 凭据管理器且不落盘", TestCredentialStore);
+        Run("API Key 按厂商分开保存，旧的共用 key 自动迁移", TestPerProviderKeys);
         Run("模型测试题：覆盖三类致命错误，只用虚构待办", TestModelTestCoverage);
         Run("模型测试题：判出致命错误、重试一次、可取消、key 错误中止", TestModelTestRun);
 
@@ -503,6 +504,52 @@ internal static class TestRunner
             new AiClient().CompleteAsync(endpoint, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult();
         }).Kind);
         Equal(1, unrelated.WaitRequests().Count);
+    }
+
+    private static void TestPerProviderKeys()
+    {
+        string previous = Environment.GetEnvironmentVariable("ROOST_CREDENTIAL_TARGET");
+        string prefix = "Roost/Test/" + Guid.NewGuid().ToString("N");
+        Environment.SetEnvironmentVariable("ROOST_CREDENTIAL_TARGET", prefix);
+        List<string> targets = new List<string> { prefix };
+        try
+        {
+            string deepseek = CredentialStore.ApiKeyTargetFor("deepseek", "https://api.deepseek.com/v1");
+            string qwen = CredentialStore.ApiKeyTargetFor("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1");
+            string custom = CredentialStore.ApiKeyTargetFor(AiPresets.CustomId, "https://API.Example.com/v1/");
+            string removedPreset = CredentialStore.ApiKeyTargetFor("kimi", "https://api.moonshot.cn/v1");
+            Equal(prefix + "/deepseek", deepseek);
+            Equal(prefix + "/qwen", qwen);
+            Equal(prefix + "/custom/api.example.com", custom);
+            Equal(prefix + "/custom/api.moonshot.cn", removedPreset);
+            True(CredentialStore.ApiKeyTargetFor(AiPresets.CustomId, "not a url") == null);
+            targets.AddRange(new[] { deepseek, qwen, custom, removedPreset });
+
+            CredentialStore.Write(deepseek, "sk-test-FAKE-deepseek");
+            True(CredentialStore.ReadApiKey(new RoostSettings { AiPresetId = "qwen", AiBaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1", AiModel = "m" }) == null);
+            Equal("sk-test-FAKE-deepseek", CredentialStore.ReadApiKey(new RoostSettings { AiPresetId = "deepseek", AiBaseUrl = "https://api.deepseek.com/v1", AiModel = "m" }));
+
+            // 旧的共用 key 迁移到当前所选厂商名下，旧位置删除。
+            CredentialStore.Write(prefix, "sk-test-FAKE-legacy");
+            RoostSettings current = new RoostSettings { AiPresetId = "qwen", AiBaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1", AiModel = "m" };
+            True(CredentialStore.MigrateLegacyApiKey(current));
+            Equal("sk-test-FAKE-legacy", CredentialStore.Read(qwen));
+            True(CredentialStore.Read(prefix) == null);
+            False(CredentialStore.MigrateLegacyApiKey(current));
+
+            // 目标厂商已经有 key 时不覆盖；没配置模型时不迁移。
+            CredentialStore.Write(prefix, "sk-test-FAKE-legacy-2");
+            True(CredentialStore.MigrateLegacyApiKey(new RoostSettings { AiPresetId = "deepseek", AiBaseUrl = "https://api.deepseek.com/v1", AiModel = "m" }));
+            Equal("sk-test-FAKE-deepseek", CredentialStore.Read(deepseek));
+            CredentialStore.Write(prefix, "sk-test-FAKE-legacy-3");
+            False(CredentialStore.MigrateLegacyApiKey(new RoostSettings()));
+            Equal("sk-test-FAKE-legacy-3", CredentialStore.Read(prefix));
+        }
+        finally
+        {
+            foreach (string target in targets) CredentialStore.Delete(target);
+            Environment.SetEnvironmentVariable("ROOST_CREDENTIAL_TARGET", previous);
+        }
     }
 
     private static AiEvalSuite LoadSuite()

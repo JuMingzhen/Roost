@@ -119,7 +119,8 @@ namespace Roost.App
                 FillPreset();
             }
             UpdatePresetInfo();
-            presetBox.SelectedIndexChanged += delegate { FillPreset(); UpdatePresetInfo(); };
+            presetBox.SelectedIndexChanged += delegate { FillPreset(); UpdatePresetInfo(); UpdateKeyHint(); };
+            urlBox.TextChanged += delegate { if (SelectedPreset() == null) UpdateKeyHint(); };
             UpdateKeyHint();
             FormClosed += delegate { if (checking != null) checking.Cancel(); };
 
@@ -158,20 +159,30 @@ namespace Roost.App
             keyLink.Visible = preset != null;
         }
 
+        // 当前选中的厂商（自定义则按服务地址）对应的 key 存放位置。
+        private string SelectedKeyTarget()
+        {
+            AiPreset preset = SelectedPreset();
+            return CredentialStore.ApiKeyTargetFor(preset == null ? AiPresets.CustomId : preset.Id, urlBox.Text);
+        }
+
+        private static string ReadKey(string target)
+        {
+            if (target == null) return null;
+            try { return CredentialStore.Read(target); }
+            catch (System.ComponentModel.Win32Exception) { return null; }
+        }
+
         private void UpdateKeyHint()
         {
-            string saved = null;
-            try { saved = CredentialStore.Read(CredentialStore.ApiKeyTarget); }
-            catch (System.ComponentModel.Win32Exception) { }
+            string saved = ReadKey(SelectedKeyTarget());
             keyHint.Text = string.IsNullOrEmpty(saved) ? "尚未保存 key。" : "已保存 key；留空则继续使用已保存的 key。";
-            selfTestButton.Enabled = settings.AiConfigured && !string.IsNullOrEmpty(saved);
+            selfTestButton.Enabled = settings.AiConfigured && !string.IsNullOrEmpty(ReadKey(CredentialStore.ApiKeyTargetFor(settings)));
         }
 
         private void OpenSelfTest()
         {
-            string key = null;
-            try { key = CredentialStore.Read(CredentialStore.ApiKeyTarget); }
-            catch (System.ComponentModel.Win32Exception) { }
+            string key = ReadKey(CredentialStore.ApiKeyTargetFor(settings));
             if (!settings.AiConfigured || string.IsNullOrEmpty(key))
             {
                 ShowAiStatus("请先保存模型配置，再用测试题检验。", Color.Firebrick);
@@ -196,9 +207,8 @@ namespace Roost.App
             string url = urlBox.Text.Trim();
             string model = modelBox.Text.Trim();
             string key = keyBox.Text.Trim();
-            string savedKey = null;
-            try { savedKey = CredentialStore.Read(CredentialStore.ApiKeyTarget); }
-            catch (System.ComponentModel.Win32Exception) { }
+            string keyTarget = SelectedKeyTarget();
+            string savedKey = ReadKey(keyTarget);
             string effectiveKey = key.Length > 0 ? key : savedKey;
             if (url.Length == 0 || model.Length == 0 || string.IsNullOrEmpty(effectiveKey))
             {
@@ -249,7 +259,7 @@ namespace Roost.App
 
             try
             {
-                if (key.Length > 0) CredentialStore.Write(CredentialStore.ApiKeyTarget, key);
+                if (key.Length > 0) CredentialStore.Write(keyTarget, key);
             }
             catch (System.ComponentModel.Win32Exception)
             {
@@ -271,7 +281,8 @@ namespace Roost.App
         private void ClearAi()
         {
             if (MessageBox.Show(this, "清除服务地址、模型名和已保存的 key 吗？", "Roost", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-            try { CredentialStore.Delete(CredentialStore.ApiKeyTarget); }
+            string keyTarget = SelectedKeyTarget();
+            try { if (keyTarget != null) CredentialStore.Delete(keyTarget); }
             catch (System.ComponentModel.Win32Exception) { }
             settings.AiBaseUrl = null;
             settings.AiModel = null;
