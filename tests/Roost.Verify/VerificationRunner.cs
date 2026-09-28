@@ -103,6 +103,13 @@ internal static class VerificationRunner
         }
         int blankClicks = sink.Clicks;
 
+        pet.BringToFront();
+        pet.ClickSettingsButtonForTest();
+        Pump(200);
+        bool settingsFromList = false;
+        foreach (Form open in Application.OpenForms) if (open is SettingsForm) { settingsFromList = true; open.Close(); break; }
+        bool settingsEntries = settingsFromList && pet.PetMenuHasSettingsForTest && pet.TrayIconCustomForTest;
+        pet.BringToFront();
         bool listBefore = service.Data.Settings.ListVisible;
         Point opaque = FindPetPoint(pet);
         pet.BringToFront();
@@ -124,7 +131,7 @@ internal static class VerificationRunner
         pet.EvaluateFullscreenForTest(false);
         bool restoredAfterFullscreen = pet.Visible;
 
-        bool pass = blank.Count == 12 && blankClicks == 12 && petClickHandled && trayLabels &&
+        bool pass = blank.Count == 12 && blankClicks == 12 && petClickHandled && trayLabels && settingsEntries &&
                     pet.HotKeyRegisteredForTest && hiddenByHotkey && pausedWhileHidden && hiddenByFullscreen && restoredAfterFullscreen;
         Dictionary<string, object> result = Base("system");
         result["actualScalePercent"] = GetScalePercent(pet);
@@ -132,6 +139,9 @@ internal static class VerificationRunner
         result["blankClicksReceivedByUnderlyingWindow"] = blankClicks;
         result["petClickHandled"] = petClickHandled;
         result["trayMenuLabelsPresent"] = trayLabels;
+        result["settingsOpensFromListButton"] = settingsFromList;
+        result["petRightClickMenuHasSettings"] = pet.PetMenuHasSettingsForTest;
+        result["trayIconIsCat"] = pet.TrayIconCustomForTest;
         result["globalHotkeyRegistered"] = pet.HotKeyRegisteredForTest;
         result["hotkeyHandlerHides"] = hiddenByHotkey;
         result["animationPausedWhileHidden"] = pausedWhileHidden;

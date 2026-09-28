@@ -59,6 +59,9 @@ namespace Roost.App
         internal static extern bool SetForegroundWindow(IntPtr window);
 
         [DllImport("user32.dll")]
+        internal static extern bool DestroyIcon(IntPtr icon);
+
+        [DllImport("user32.dll")]
         internal static extern bool GetWindowRect(IntPtr window, out RECT rectangle);
 
         [DllImport("user32.dll")]

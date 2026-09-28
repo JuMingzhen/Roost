@@ -26,6 +26,8 @@ namespace Roost.App
         private readonly BubbleView bubble;
         private readonly Timer bubbleTimer;
         private readonly NotifyIcon tray;
+        private readonly Button settingsButton;
+        private readonly IntPtr trayIconHandle;
         private readonly ToolStripMenuItem showHideItem;
         private readonly Timer fullscreenTimer;
         private readonly Timer undoTimer;
@@ -54,6 +56,21 @@ namespace Roost.App
         internal Rectangle ListBoundsForTest { get { return listPanel.Bounds; } }
         internal bool HotKeyRegisteredForTest { get { return hotKeyRegistered; } }
         internal bool TalkHotKeyRegisteredForTest { get { return talkHotKeyRegistered; } }
+        internal bool TrayIconCustomForTest { get { return trayIconHandle != IntPtr.Zero; } }
+        internal bool PetMenuHasSettingsForTest
+        {
+            get
+            {
+                if (sprite.ContextMenuStrip == null) return false;
+                foreach (ToolStripItem item in sprite.ContextMenuStrip.Items) if (item.Text == "设置") return true;
+                return false;
+            }
+        }
+
+        internal void ClickSettingsButtonForTest()
+        {
+            settingsButton.PerformClick();
+        }
         internal string BubbleMessageForTest { get { return bubble.MessageForTest; } }
         internal PetState PetStateForTest { get { return sprite.State; } }
         internal bool ThinkingForTest { get { return talkCancel != null; } }
@@ -136,6 +153,10 @@ namespace Roost.App
             Button add = new Button { Text = "+", Location = new Point(294, 8), Size = new Size(40, 34), FlatStyle = FlatStyle.Flat };
             add.FlatAppearance.BorderSize = 0;
             add.Click += delegate { OpenEditor(null); };
+            settingsButton = new Button { Text = "⚙", Location = new Point(250, 8), Size = new Size(40, 34), FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI Symbol", 12F), ForeColor = Color.DimGray };
+            settingsButton.FlatAppearance.BorderSize = 0;
+            settingsButton.Click += delegate { OpenSettings(); };
+            new ToolTip().SetToolTip(settingsButton, "设置");
             onlyToday = new CheckBox { Text = "只显示今日", Location = new Point(14, 80), AutoSize = true, Checked = todos.Data.Settings.OnlyToday };
             onlyToday.CheckedChanged += delegate
             {
@@ -170,7 +191,7 @@ namespace Roost.App
             undoButton = new Button { Text = "撤销", Location = new Point(196, 4), Size = new Size(112, 30), FlatStyle = FlatStyle.Flat, ForeColor = Color.White };
             undoButton.Click += delegate { RunUndo(); };
             undoPanel.Controls.AddRange(new Control[] { undoLabel, undoButton });
-            listPanel.Controls.AddRange(new Control[] { heading, add, talkBox, talkButton, onlyToday, rows, moreButton, undoPanel });
+            listPanel.Controls.AddRange(new Control[] { heading, settingsButton, add, talkBox, talkButton, onlyToday, rows, moreButton, undoPanel });
             bubble = new BubbleView { Font = Font };
             bubble.Dismissed += delegate { bubbleTimer.Stop(); bubbleSize = Size.Empty; ApplyLayout(); };
             Controls.Add(bubble);
@@ -186,7 +207,15 @@ namespace Roost.App
             ToolStripMenuItem exitItem = new ToolStripMenuItem("退出");
             exitItem.Click += delegate { ExitApplication(); };
             menu.Items.AddRange(new ToolStripItem[] { showHideItem, settingsItem, new ToolStripSeparator(), exitItem });
-            tray = new NotifyIcon { Text = "Roost", Icon = SystemIcons.Application, ContextMenuStrip = menu, Visible = true };
+            sprite.ContextMenuStrip = menu;
+            trayIconHandle = CreateTrayIconHandle(assetRoot);
+            tray = new NotifyIcon
+            {
+                Text = "Roost（右键打开菜单）",
+                Icon = trayIconHandle == IntPtr.Zero ? SystemIcons.Application : Icon.FromHandle(trayIconHandle),
+                ContextMenuStrip = menu,
+                Visible = true
+            };
             tray.DoubleClick += delegate { ShowFromUser(); };
 
             fullscreenTimer = new Timer { Interval = 1000 };
@@ -267,6 +296,7 @@ namespace Roost.App
             }
             fullscreenTimer.Stop();
             tray.Visible = false;
+            if (trayIconHandle != IntPtr.Zero) NativeMethods.DestroyIcon(trayIconHandle);
             SystemEvents.SessionSwitch -= SessionSwitch;
             base.OnFormClosing(e);
         }
@@ -295,6 +325,25 @@ namespace Roost.App
                 BeginInvoke((MethodInvoker)delegate { RecoverAndSavePosition(); });
             }
             base.WndProc(ref message);
+        }
+
+        // 托盘图标用猫的待机帧，缩到托盘尺寸（最近邻，保持像素风）。
+        private static IntPtr CreateTrayIconHandle(string assetRoot)
+        {
+            string path = Path.Combine(assetRoot, "idle.png");
+            if (!File.Exists(path)) return IntPtr.Zero;
+            Size size = SystemInformation.SmallIconSize;
+            using (Bitmap source = new Bitmap(path))
+            using (Bitmap icon = new Bitmap(size.Width, size.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+            {
+                using (Graphics graphics = Graphics.FromImage(icon))
+                {
+                    SpriteView.ConfigurePixelGraphics(graphics);
+                    graphics.Clear(Color.Transparent);
+                    graphics.DrawImage(source, new Rectangle(Point.Empty, size), 0, 0, source.Width, source.Height, GraphicsUnit.Pixel);
+                }
+                return icon.GetHicon();
+            }
         }
 
         private int PetSize()
