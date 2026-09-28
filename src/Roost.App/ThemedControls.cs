@@ -494,4 +494,64 @@ namespace Roost.App
             using (Pen pen = new Pen(Focused ? Theme.AccentPressed : Theme.Accent, stroke)) e.Graphics.DrawEllipse(pen, thumb);
         }
     }
+
+    // 右键菜单与托盘菜单：白底、暖灰细边、选中项浅陶土色圆角底；Windows 11 上请求系统圆角。
+    internal sealed class ThemedMenuRenderer : ToolStripProfessionalRenderer
+    {
+        private ThemedMenuRenderer() : base(new MenuColors())
+        {
+            RoundedEdges = false;
+        }
+
+        internal static void Apply(ContextMenuStrip menu)
+        {
+            menu.Renderer = new ThemedMenuRenderer();
+            menu.Font = Theme.Body;
+            menu.ShowImageMargin = false;
+            menu.BackColor = Theme.Card;
+            menu.Padding = new Padding(DpiScale.Px(4));
+            menu.MinimumSize = new Size(DpiScale.Px(148), 0);
+            foreach (ToolStripItem item in menu.Items)
+                if (item is ToolStripMenuItem) item.Padding = new Padding(0, DpiScale.Px(5), 0, DpiScale.Px(5));
+            menu.HandleCreated += delegate
+            {
+                int preference = NativeMethods.DWMWCP_ROUND;
+                try { NativeMethods.DwmSetWindowAttribute(menu.Handle, NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE, ref preference, sizeof(int)); }
+                catch (DllNotFoundException) { }
+                catch (EntryPointNotFoundException) { }
+            };
+        }
+
+        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+        {
+            if (!e.Item.Selected || !e.Item.Enabled) return;
+            Rectangle bounds = new Rectangle(DpiScale.Px(2), 0, e.Item.Width - DpiScale.Px(4), e.Item.Height);
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using (GraphicsPath path = Theme.RoundedRectangle(bounds, DpiScale.Px(Theme.RadiusControl)))
+            using (SolidBrush brush = new SolidBrush(Theme.AccentSoft)) e.Graphics.FillPath(brush, path);
+            e.Graphics.SmoothingMode = SmoothingMode.None;
+        }
+
+        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        {
+            if (e.Item.Enabled && e.TextColor != Theme.Danger) e.TextColor = Theme.Text;
+            // 没有图标栏时文字贴着左边，右移一些留出呼吸感。
+            Rectangle text = e.TextRectangle;
+            e.TextRectangle = new Rectangle(text.X + DpiScale.Px(8), text.Y, text.Width, text.Height);
+            base.OnRenderItemText(e);
+        }
+
+        private sealed class MenuColors : ProfessionalColorTable
+        {
+            public override Color ToolStripDropDownBackground { get { return Theme.Card; } }
+            public override Color MenuBorder { get { return Theme.Line; } }
+            public override Color MenuItemBorder { get { return Color.Transparent; } }
+            public override Color MenuItemSelected { get { return Theme.AccentSoft; } }
+            public override Color ImageMarginGradientBegin { get { return Theme.Card; } }
+            public override Color ImageMarginGradientMiddle { get { return Theme.Card; } }
+            public override Color ImageMarginGradientEnd { get { return Theme.Card; } }
+            public override Color SeparatorDark { get { return Theme.Line; } }
+            public override Color SeparatorLight { get { return Theme.Card; } }
+        }
+    }
 }

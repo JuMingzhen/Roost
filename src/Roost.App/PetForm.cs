@@ -96,6 +96,7 @@ namespace Roost.App
         }
         internal string BubbleMessageForTest { get { return bubble.MessageForTest; } }
         internal Control BubbleForTest { get { return bubble; } }
+        internal ContextMenuStrip MenuForTest { get { return sprite.ContextMenuStrip; } }
 
         internal void ShowBubbleForTest(string message, string actionText)
         {
@@ -280,9 +281,10 @@ namespace Roost.App
             showHideItem.Click += delegate { ToggleFromUser(); };
             ToolStripMenuItem settingsItem = new ToolStripMenuItem("设置");
             settingsItem.Click += delegate { OpenSettings(); };
-            ToolStripMenuItem exitItem = new ToolStripMenuItem("退出");
+            ToolStripMenuItem exitItem = new ToolStripMenuItem("退出") { ForeColor = Theme.Danger };
             exitItem.Click += delegate { ExitApplication(); };
             menu.Items.AddRange(new ToolStripItem[] { showHideItem, settingsItem, new ToolStripSeparator(), exitItem });
+            ThemedMenuRenderer.Apply(menu);
             sprite.ContextMenuStrip = menu;
             trayIconHandle = CreateTrayIconHandle(assetRoot);
             tray = new NotifyIcon

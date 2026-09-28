@@ -592,6 +592,20 @@ internal static class VerificationRunner
         Capture(pet.ListPanelForTest, Path.Combine(screenshotDirectory, "list.png"));
         checkedForms.Add("清单");
 
+        // 右键菜单：在屏幕上弹出后截图留证，并检查菜单项排版。
+        ContextMenuStrip menu = pet.MenuForTest;
+        menu.Show(new Point(40, 40));
+        Pump(150);
+        CheckLayout(menu, "右键菜单", problems);
+        using (Bitmap shot = new Bitmap(Math.Max(1, menu.Width), Math.Max(1, menu.Height)))
+        {
+            using (Graphics graphics = Graphics.FromImage(shot)) graphics.CopyFromScreen(menu.Location, Point.Empty, shot.Size);
+            shot.Save(Path.Combine(screenshotDirectory, "menu.png"), ImageFormat.Png);
+        }
+        checkedForms.Add("右键菜单");
+        menu.Close();
+        Pump(50);
+
         pet.ShowBubbleForTest("还没有配置模型，暂时不能跟我说话。不配置也能正常使用本地待办。", "去设置");
         Pump(100);
         // 气泡窗口要真的显示出来，否则子控件都算不可见，排版检查会漏掉。
