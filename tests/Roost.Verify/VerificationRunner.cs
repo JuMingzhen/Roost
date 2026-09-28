@@ -528,6 +528,9 @@ internal static class VerificationRunner
         int scale = 0;
 
         RoostSettings settings = new RoostSettings { AiPresetId = "deepseek", AiBaseUrl = "https://api.deepseek.com/v1", AiModel = "deepseek-flash" };
+        Environment.SetEnvironmentVariable("ROOST_CREDENTIAL_TARGET", "Roost/Verify/" + Guid.NewGuid().ToString("N"));
+        string keyTarget = CredentialStore.ApiKeyTargetFor(settings);
+        CredentialStore.Write(keyTarget, "sk-verify-FAKE-ABCD");
         SettingsForm settingsForm = new SettingsForm(settings);
         TabControl tabs = null;
         foreach (Control control in settingsForm.Controls) if (control is TabControl) tabs = (TabControl)control;
@@ -541,7 +544,16 @@ internal static class VerificationRunner
             Capture(settingsForm, Path.Combine(screenshotDirectory, "settings-" + tabs.SelectedIndex + ".png"));
             checkedForms.Add("设置/" + page.Text);
         }
+        tabs.SelectedIndex = 2;
+        bool maskedKeyShown = settingsForm.KeyStatusForTest == "已保存：sk-…ABCD";
+        if (!maskedKeyShown) problems.Add("设置/AI 与自启 已保存 key 的掩码显示不对：" + settingsForm.KeyStatusForTest);
+        settingsForm.ShowKeyEditorForTest();
+        Pump(50);
+        CheckLayout(tabs.SelectedTab, "设置/AI 与自启（更换 key）", problems);
+        Capture(settingsForm, Path.Combine(screenshotDirectory, "settings-key-editor.png"));
+        checkedForms.Add("设置/AI 与自启（更换 key）");
         settingsForm.Close();
+        CredentialStore.Delete(keyTarget);
 
         TodoItem sample = new TodoItem { Title = "虚构待办：整理季度材料", Notes = "虚构备注", DueDate = "2026-09-24", DueTime = "15:00", IsStarred = true };
         TodoEditorForm editor = new TodoEditorForm(sample);

@@ -52,6 +52,10 @@ namespace Roost.Core
         public string AiBaseUrl { get; set; }
         public string AiModel { get; set; }
         public bool AiPrivacyAcknowledged { get; set; }
+        public string AiCheckTarget { get; set; }
+        public string AiCheckModel { get; set; }
+        public bool AiCheckPassed { get; set; }
+        public string AiCheckUtc { get; set; }
 
         [ScriptIgnore]
         public bool AiConfigured

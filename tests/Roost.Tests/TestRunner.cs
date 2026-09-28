@@ -523,6 +523,10 @@ internal static class TestRunner
             Equal(prefix + "/custom/api.example.com", custom);
             Equal(prefix + "/custom/api.moonshot.cn", removedPreset);
             True(CredentialStore.ApiKeyTargetFor(AiPresets.CustomId, "not a url") == null);
+            Equal("sk-…WXYZ", CredentialStore.MaskKey("sk-test-FAKE-1234WXYZ"));
+            Equal("…WXYZ", CredentialStore.MaskKey("ark-test-FAKE-WXYZ"));
+            Equal("（已保存）", CredentialStore.MaskKey("short-key"));
+            Equal(string.Empty, CredentialStore.MaskKey(null));
             targets.AddRange(new[] { deepseek, qwen, custom, removedPreset });
 
             CredentialStore.Write(deepseek, "sk-test-FAKE-deepseek");

@@ -22,10 +22,16 @@ namespace Roost.App
         private readonly TextBox urlBox;
         private readonly TextBox modelBox;
         private readonly TextBox keyBox;
-        private readonly Label keyHint;
+        private readonly CheckBox showKey;
+        private readonly Label keyStatus;
+        private readonly Button changeKeyButton;
+        private readonly Button deleteKeyButton;
+        private readonly Button cancelKeyButton;
+        private readonly Label checkInfo;
         private readonly Button checkButton;
-        private readonly Button clearButton;
+        private readonly LinkLabel clearLink;
         private readonly Button selfTestButton;
+        private bool editingKey;
         private readonly Label aiStatus;
         private CancellationTokenSource checking;
 
@@ -88,23 +94,32 @@ namespace Roost.App
             modelBox = new TextBox { Location = new Point(110, 138), Width = 370 };
             aiPage.Controls.Add(modelBox);
             aiPage.Controls.Add(new Label { Text = "API Key", Location = new Point(24, 178), AutoSize = true });
-            keyBox = new TextBox { Location = new Point(110, 174), Width = 370, UseSystemPasswordChar = true };
-            aiPage.Controls.Add(keyBox);
-            keyHint = new Label { Location = new Point(110, 200), Size = new Size(380, 20), ForeColor = Color.DimGray };
-            aiPage.Controls.Add(keyHint);
-            checkButton = new Button { Text = "保存并检测", Location = new Point(110, 228), Size = new Size(120, 34) };
+            keyStatus = new Label { Location = new Point(110, 178), Size = new Size(200, 22) };
+            changeKeyButton = new Button { Text = "更换 key", Location = new Point(314, 172), Size = new Size(80, 30) };
+            changeKeyButton.Click += delegate { editingKey = true; UpdateKeyState(); keyBox.Focus(); };
+            deleteKeyButton = new Button { Text = "删除 key", Location = new Point(400, 172), Size = new Size(80, 30) };
+            deleteKeyButton.Click += delegate { DeleteKey(); };
+            keyBox = new TextBox { Location = new Point(110, 174), Width = 236, UseSystemPasswordChar = true };
+            showKey = new CheckBox { Text = "显示", Location = new Point(352, 177), AutoSize = true };
+            showKey.CheckedChanged += delegate { keyBox.UseSystemPasswordChar = !showKey.Checked; };
+            cancelKeyButton = new Button { Text = "取消", Location = new Point(420, 172), Size = new Size(60, 30) };
+            cancelKeyButton.Click += delegate { editingKey = false; UpdateKeyState(); };
+            aiPage.Controls.AddRange(new Control[] { keyStatus, changeKeyButton, deleteKeyButton, keyBox, showKey, cancelKeyButton });
+            checkInfo = new Label { Location = new Point(110, 208), Size = new Size(380, 20), ForeColor = Color.DimGray };
+            aiPage.Controls.Add(checkInfo);
+            checkButton = new Button { Text = "保存并检测", Location = new Point(110, 236), Size = new Size(120, 34) };
             checkButton.Click += delegate { SaveAi(); };
-            clearButton = new Button { Text = "清除 AI 配置", Location = new Point(240, 228), Size = new Size(120, 34) };
-            clearButton.Click += delegate { ClearAi(); };
-            selfTestButton = new Button { Text = "用测试题检验…", Location = new Point(370, 228), Size = new Size(120, 34) };
+            selfTestButton = new Button { Text = "用测试题检验…", Location = new Point(240, 236), Size = new Size(130, 34) };
             selfTestButton.Click += delegate { OpenSelfTest(); };
             aiPage.Controls.Add(checkButton);
-            aiPage.Controls.Add(clearButton);
             aiPage.Controls.Add(selfTestButton);
-            aiStatus = new Label { Location = new Point(24, 272), Size = new Size(460, 44) };
+            aiStatus = new Label { Location = new Point(24, 278), Size = new Size(460, 44) };
             aiPage.Controls.Add(aiStatus);
-            aiPage.Controls.Add(new Label { Text = "key 只保存在 Windows 凭据管理器里。不配置模型也能完整使用本地待办。", Location = new Point(24, 320), Size = new Size(460, 20), ForeColor = Color.DimGray });
-            CheckBox startup = new CheckBox { Text = "开机自启（M4）", Location = new Point(24, 356), AutoSize = true, Enabled = false };
+            aiPage.Controls.Add(new Label { Text = "key 按厂商保存在 Windows 凭据管理器。不配置模型也能用本地待办。", Location = new Point(24, 326), Size = new Size(460, 20), ForeColor = Color.DimGray });
+            clearLink = new LinkLabel { Text = "清除全部 AI 配置", Location = new Point(24, 352), AutoSize = true, LinkColor = Color.DimGray };
+            clearLink.LinkClicked += delegate { ClearAi(); };
+            aiPage.Controls.Add(clearLink);
+            CheckBox startup = new CheckBox { Text = "开机自启（M4）", Location = new Point(24, 378), AutoSize = true, Enabled = false };
             aiPage.Controls.Add(startup);
 
             AiPreset current = AiPresets.Find(settings.AiPresetId);
@@ -119,9 +134,10 @@ namespace Roost.App
                 FillPreset();
             }
             UpdatePresetInfo();
-            presetBox.SelectedIndexChanged += delegate { FillPreset(); UpdatePresetInfo(); UpdateKeyHint(); };
-            urlBox.TextChanged += delegate { if (SelectedPreset() == null) UpdateKeyHint(); };
-            UpdateKeyHint();
+            presetBox.SelectedIndexChanged += delegate { FillPreset(); UpdatePresetInfo(); editingKey = false; UpdateKeyState(); };
+            urlBox.TextChanged += delegate { if (SelectedPreset() == null) UpdateKeyState(); };
+            modelBox.TextChanged += delegate { UpdateCheckInfo(); };
+            UpdateKeyState();
             FormClosed += delegate { if (checking != null) checking.Cancel(); };
 
             about.Controls.Add(new Label { Text = "Roost M1\r\n\r\n像素猫素材：Desktop Cat\r\nCopyright (c) 2025 Administrator\r\nMIT License", Location = new Point(28, 28), Size = new Size(420, 130) });
@@ -132,6 +148,14 @@ namespace Roost.App
             Controls.Add(tabs);
             DpiScale.Apply(this);
         }
+
+        internal void ShowKeyEditorForTest()
+        {
+            editingKey = true;
+            UpdateKeyState();
+        }
+
+        internal string KeyStatusForTest { get { return keyStatus.Visible ? keyStatus.Text : null; } }
 
         internal void ShowAiTab()
         {
@@ -173,11 +197,63 @@ namespace Roost.App
             catch (System.ComponentModel.Win32Exception) { return null; }
         }
 
-        private void UpdateKeyHint()
+        // 已保存 key 时显示掩码和「更换 / 删除」；没有 key 或点了「更换」时显示输入框。
+        private void UpdateKeyState()
         {
             string saved = ReadKey(SelectedKeyTarget());
-            keyHint.Text = string.IsNullOrEmpty(saved) ? "尚未保存 key。" : "已保存 key；留空则继续使用已保存的 key。";
+            bool hasKey = !string.IsNullOrEmpty(saved);
+            bool edit = !hasKey || editingKey;
+            keyStatus.Text = hasKey ? "已保存：" + CredentialStore.MaskKey(saved) : string.Empty;
+            keyStatus.Visible = !edit;
+            changeKeyButton.Visible = !edit;
+            deleteKeyButton.Visible = !edit;
+            keyBox.Visible = edit;
+            showKey.Visible = edit;
+            cancelKeyButton.Visible = edit && hasKey;
+            if (!edit)
+            {
+                keyBox.Text = string.Empty;
+                showKey.Checked = false;
+            }
+            UpdateCheckInfo();
             selfTestButton.Enabled = settings.AiConfigured && !string.IsNullOrEmpty(ReadKey(CredentialStore.ApiKeyTargetFor(settings)));
+        }
+
+        private void UpdateCheckInfo()
+        {
+            string target = SelectedKeyTarget();
+            bool known = target != null && target == settings.AiCheckTarget && modelBox.Text.Trim() == settings.AiCheckModel;
+            DateTime checkedAt;
+            if (known && DateTime.TryParse(settings.AiCheckUtc, null, System.Globalization.DateTimeStyles.RoundtripKind, out checkedAt))
+            {
+                checkInfo.Text = string.Format("上次检测：{0} {1}", checkedAt.ToLocalTime().ToString("M月d日 HH:mm"), settings.AiCheckPassed ? "通过" : "未完成（网络原因）");
+                checkInfo.ForeColor = settings.AiCheckPassed ? Color.SeaGreen : Color.DarkOrange;
+            }
+            else
+            {
+                checkInfo.Text = editingKey || string.IsNullOrEmpty(ReadKey(target)) ? "填好后点「保存并检测」。" : "这个组合还没有检测过。";
+                checkInfo.ForeColor = Color.DimGray;
+            }
+        }
+
+        private void DeleteKey()
+        {
+            AiPreset preset = SelectedPreset();
+            string name = preset == null ? "这个服务" : preset.Name;
+            if (MessageBox.Show(this, "删除 " + name + " 的 API key 吗？服务地址和模型名会保留。", "Roost", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            string target = SelectedKeyTarget();
+            try { if (target != null) CredentialStore.Delete(target); }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                ShowAiStatus("✗ 无法从 Windows 凭据管理器删除 key。", Color.Firebrick);
+                return;
+            }
+            if (target == settings.AiCheckTarget) settings.AiCheckTarget = null;
+            editingKey = false;
+            UpdateKeyState();
+            ShowAiStatus("已删除 " + name + " 的 key。", Color.DimGray);
+            EventHandler handler = SettingsSaved;
+            if (handler != null) handler(this, EventArgs.Empty);
         }
 
         private void OpenSelfTest()
@@ -226,7 +302,7 @@ namespace Roost.App
             }
 
             checkButton.Enabled = false;
-            clearButton.Enabled = false;
+            clearLink.Enabled = false;
             ShowAiStatus("正在检测服务地址、key 和模型名……", Color.DimGray);
             checking = new CancellationTokenSource();
             AiException failure = null;
@@ -240,7 +316,7 @@ namespace Roost.App
             }
             if (IsDisposed) return;
             checkButton.Enabled = true;
-            clearButton.Enabled = true;
+            clearLink.Enabled = true;
             if (failure != null && failure.Kind == AiFailureKind.Cancelled) return;
             if (failure != null && !failure.Retryable)
             {
@@ -271,8 +347,12 @@ namespace Roost.App
             settings.AiBaseUrl = url;
             settings.AiModel = model;
             settings.AiPrivacyAcknowledged = true;
-            keyBox.Text = string.Empty;
-            UpdateKeyHint();
+            settings.AiCheckTarget = keyTarget;
+            settings.AiCheckModel = model;
+            settings.AiCheckPassed = failure == null;
+            settings.AiCheckUtc = DateTime.UtcNow.ToString("o");
+            editingKey = false;
+            UpdateKeyState();
             ShowAiStatus(failure == null ? "✓ 检测通过，已保存。可以点「用测试题检验」看看它改计划靠不靠谱。" : "已保存，但尚未通过检测。", failure == null ? Color.SeaGreen : Color.DarkOrange);
             EventHandler handler = SettingsSaved;
             if (handler != null) handler(this, EventArgs.Empty);
@@ -280,15 +360,16 @@ namespace Roost.App
 
         private void ClearAi()
         {
-            if (MessageBox.Show(this, "清除服务地址、模型名和已保存的 key 吗？", "Roost", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            if (MessageBox.Show(this, "清除服务地址、模型名和当前厂商已保存的 key 吗？", "Roost", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
             string keyTarget = SelectedKeyTarget();
             try { if (keyTarget != null) CredentialStore.Delete(keyTarget); }
             catch (System.ComponentModel.Win32Exception) { }
             settings.AiBaseUrl = null;
             settings.AiModel = null;
             settings.AiPresetId = null;
-            keyBox.Text = string.Empty;
-            UpdateKeyHint();
+            settings.AiCheckTarget = null;
+            editingKey = false;
+            UpdateKeyState();
             ShowAiStatus("已清除 AI 配置。", Color.DimGray);
             EventHandler handler = SettingsSaved;
             if (handler != null) handler(this, EventArgs.Empty);

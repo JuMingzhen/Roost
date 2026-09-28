@@ -32,6 +32,15 @@ namespace Roost.Core
             return ApiKeyTargetFor(settings.AiPresetId, settings.AiBaseUrl);
         }
 
+        // 设置页展示用：只露出 sk- 前缀和末尾 4 位；太短的 key 不露任何字符。
+        public static string MaskKey(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return string.Empty;
+            if (key.Length < 12) return "（已保存）";
+            string prefix = key.StartsWith("sk-", StringComparison.Ordinal) ? "sk-" : string.Empty;
+            return prefix + "…" + key.Substring(key.Length - 4);
+        }
+
         public static string ReadApiKey(RoostSettings settings)
         {
             string target = ApiKeyTargetFor(settings);
