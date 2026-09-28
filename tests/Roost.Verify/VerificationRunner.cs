@@ -593,6 +593,14 @@ internal static class VerificationRunner
         Capture(pet.ListPanelForTest, Path.Combine(screenshotDirectory, "list.png"));
         checkedForms.Add("清单");
 
+        pet.ShowBubbleForTest("还没有配置模型，暂时不能跟我说话。不配置也能正常使用本地待办。", "去设置");
+        Pump(100);
+        // 气泡窗口要真的显示出来，否则子控件都算不可见，排版检查会漏掉。
+        if (!pet.BubbleForTest.Visible) problems.Add("气泡窗口没有显示");
+        CheckLayout(pet.BubbleForTest, "气泡", problems);
+        Capture(pet.BubbleForTest, Path.Combine(screenshotDirectory, "bubble.png"));
+        checkedForms.Add("气泡");
+
         // 编辑模式：全选后批量删除，出现撤销条；撤销后整批恢复。
         pet.SetEditingForTest(true);
         pet.SelectAllForTest();

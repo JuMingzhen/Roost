@@ -95,6 +95,12 @@ namespace Roost.App
             settingsButton.PerformClick();
         }
         internal string BubbleMessageForTest { get { return bubble.MessageForTest; } }
+        internal Control BubbleForTest { get { return bubble; } }
+
+        internal void ShowBubbleForTest(string message, string actionText)
+        {
+            ShowBubble(message, actionText, null);
+        }
         internal PetState PetStateForTest { get { return sprite.State; } }
         internal bool ThinkingForTest { get { return talkCancel != null; } }
         internal string TalkTextForTest { get { return talkBox.Text; } }
@@ -261,7 +267,7 @@ namespace Roost.App
             listPanel.Controls.AddRange(new Control[] { heading, countLabel, editButton, settingsButton, addButton, selectAllButton, doneButton, talkField, filter, rows, moreButton, editBar, undoPanel });
             bubble = new BubbleView { Font = Font };
             bubble.Dismissed += delegate { bubbleTimer.Stop(); bubbleSize = Size.Empty; ApplyLayout(); };
-            bubbleWindow = new FloatingWindow(bubble, NativeMethods.DWMWCP_ROUNDSMALL) { Owner = this };
+            bubbleWindow = new FloatingWindow(bubble, NativeMethods.DWMWCP_ROUND) { Owner = this };
             listWindow = new FloatingWindow(listPanel, NativeMethods.DWMWCP_ROUND) { Owner = this, KeyPreview = true };
             listWindow.KeyDown += delegate(object sender, KeyEventArgs e)
             {

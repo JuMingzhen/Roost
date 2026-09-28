@@ -45,7 +45,13 @@ namespace Roost.App
         {
             base.OnHandleCreated(e);
             int preference = cornerPreference;
-            try { cornerResult = NativeMethods.DwmSetWindowAttribute(Handle, NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE, ref preference, sizeof(int)); }
+            // 系统细边框改成主题的暖灰色（COLORREF 为 0x00BBGGRR）。
+            int border = Theme.Line.R | (Theme.Line.G << 8) | (Theme.Line.B << 16);
+            try
+            {
+                cornerResult = NativeMethods.DwmSetWindowAttribute(Handle, NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE, ref preference, sizeof(int));
+                NativeMethods.DwmSetWindowAttribute(Handle, NativeMethods.DWMWA_BORDER_COLOR, ref border, sizeof(int));
+            }
             catch (DllNotFoundException) { cornerResult = -1; }
             catch (EntryPointNotFoundException) { cornerResult = -1; }
         }
