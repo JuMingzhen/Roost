@@ -24,29 +24,40 @@ namespace Roost.App
         internal TodoEditorForm(TodoItem item)
         {
             Text = item == null ? "新建待办" : "编辑待办";
-            Font = new Font("Microsoft YaHei UI", 9F);
+            Font = Theme.Body;
+            BackColor = Theme.Paper;
+            ForeColor = Theme.Text;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterScreen;
             MaximizeBox = false;
             MinimizeBox = false;
-            ClientSize = new Size(420, 385);
+            ClientSize = new Size(440, 470);
 
-            Label titleLabel = LabelAt("标题 *", 22, 18, 100);
-            titleBox = TextAt(22, 42, 376, 28);
-            Label notesLabel = LabelAt("备注", 22, 82, 100);
-            notesBox = TextAt(22, 106, 376, 86);
+            Label heading = new Label { Text = Text, Location = new Point(24, 20), Size = new Size(392, 28), Font = Theme.DialogTitle, BackColor = Theme.Paper };
+            Label titleLabel = LabelAt("标题（必填）", 24, 60);
+            TextField titleField = new TextField { Bounds = new Rectangle(24, 82, 392, 36) };
+            titleBox = titleField.Box;
+            Label notesLabel = LabelAt("备注", 24, 128);
+            TextField notesField = new TextField { Bounds = new Rectangle(24, 150, 392, 72) };
+            notesBox = notesField.Box;
             notesBox.Multiline = true;
+            notesField.LayoutBox();
 
-            hasDate = new CheckBox { Text = "日期", Location = new Point(22, 212), AutoSize = true };
-            datePicker = new DateTimePicker { Location = new Point(92, 207), Width = 150, Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd" };
-            hasTime = new CheckBox { Text = "具体时刻", Location = new Point(22, 252), AutoSize = true };
-            timePicker = new DateTimePicker { Location = new Point(120, 247), Width = 122, Format = DateTimePickerFormat.Custom, CustomFormat = "HH:mm", ShowUpDown = true };
-            starred = new CheckBox { Text = "星标重要", Location = new Point(280, 212), AutoSize = true };
+            Label whenLabel = LabelAt("什么时候", 24, 234);
+            hasDate = new ToggleSwitch("日期") { Location = new Point(24, 258), Size = new Size(100, 30) };
+            datePicker = new DateTimePicker { Location = new Point(136, 260), Width = 160, Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd  ddd" };
+            hasTime = new ToggleSwitch("具体时刻") { Location = new Point(24, 296), Size = new Size(110, 30) };
+            timePicker = new DateTimePicker { Location = new Point(136, 298), Width = 100, Format = DateTimePickerFormat.Custom, CustomFormat = "HH:mm", ShowUpDown = true };
             hasDate.CheckedChanged += delegate { UpdateDateControls(); };
             hasTime.CheckedChanged += delegate { UpdateDateControls(); };
 
-            Button cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Location = new Point(232, 326), Size = new Size(78, 34) };
-            Button save = new Button { Text = "保存", Location = new Point(320, 326), Size = new Size(78, 34) };
+            CardPanel starCard = new CardPanel { Location = new Point(24, 342), Size = new Size(392, 44) };
+            starred = new ToggleSwitch("星标重要：排在同组最前") { Location = new Point(12, 7), Size = new Size(368, 30), BackColor = Theme.Card };
+            starCard.Controls.Add(starred);
+
+            Panel footer = new Panel { Location = new Point(0, 402), Size = new Size(440, 68), BackColor = Theme.Sidebar };
+            RoundButton cancel = new RoundButton("取消", ButtonKind.Secondary) { DialogResult = DialogResult.Cancel, Location = new Point(236, 16), Size = new Size(84, 36) };
+            RoundButton save = new RoundButton("保存", ButtonKind.Primary) { Location = new Point(328, 16), Size = new Size(88, 36) };
             save.Click += delegate
             {
                 if (TodoTitle.Length == 0)
@@ -59,14 +70,15 @@ namespace Roost.App
             };
             AcceptButton = save;
             CancelButton = cancel;
+            footer.Controls.AddRange(new Control[] { cancel, save });
 
-            Controls.AddRange(new Control[] { titleLabel, titleBox, notesLabel, notesBox, hasDate, datePicker, hasTime, timePicker, starred, cancel, save });
+            Controls.AddRange(new Control[] { heading, titleLabel, titleField, notesLabel, notesField, whenLabel, hasDate, datePicker, hasTime, timePicker, starCard, footer });
 
             if (item != null)
             {
                 // 删单条待办在这里（清单行上不放删除按钮，PRD 7.4）。返回 Abort 表示删除。
-                Button delete = new Button { Text = "删除这条", DialogResult = DialogResult.Abort, Location = new Point(22, 326), Size = new Size(96, 34), ForeColor = Theme.Danger };
-                Controls.Add(delete);
+                RoundButton delete = new RoundButton("删除这条", ButtonKind.Danger) { Glyph = Theme.Icons.Delete, DialogResult = DialogResult.Abort, Location = new Point(24, 16), Size = new Size(108, 36) };
+                footer.Controls.Add(delete);
                 titleBox.Text = item.Title;
                 notesBox.Text = item.Notes;
                 DateTime date;
@@ -87,15 +99,9 @@ namespace Roost.App
             if (!hasDate.Checked) hasTime.Checked = false;
         }
 
-        private Label LabelAt(string text, int x, int y, int width)
+        private Label LabelAt(string text, int x, int y)
         {
-            return new Label { Text = text, Location = new Point(x, y), Width = width, Height = 20 };
-        }
-
-        private TextBox TextAt(int x, int y, int width, int height)
-        {
-            return new TextBox { Location = new Point(x, y), Size = new Size(width, height) };
+            return new Label { Text = text, Location = new Point(x, y), Size = new Size(200, 20), Font = Theme.CaptionBold, ForeColor = Theme.TextMuted, BackColor = Theme.Paper };
         }
     }
 }
-
