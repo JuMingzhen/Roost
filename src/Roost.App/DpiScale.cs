@@ -35,6 +35,17 @@ namespace Roost.App
         internal static void Apply(Control control)
         {
             if (Math.Abs(Factor - 1F) > 0.001F) control.Scale(new SizeF(Factor, Factor));
+            Relayout(control);
+        }
+
+        // 自绘控件按自身尺寸摆放内部子控件；整体放大后子控件也被放大了一次，这里按新尺寸重新摆放。
+        private static void Relayout(Control control)
+        {
+            TextField field = control as TextField;
+            if (field != null) field.LayoutBox();
+            SegmentedControl segments = control as SegmentedControl;
+            if (segments != null) segments.LayoutSegments();
+            foreach (Control child in control.Controls) Relayout(child);
         }
     }
 }
