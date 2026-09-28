@@ -4,8 +4,11 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using Roost.Core;
 
 internal static class TestRunner
@@ -30,6 +33,19 @@ internal static class TestRunner
         Run("全屏窗口判定", TestFullscreenRules);
         Run("原子写入中强杀不损坏主文件", TestCrashDuringWrite);
         Run("自动备份只保留最近七份", TestBackupRetention);
+        Run("AI 发送范围：未完成 + 7 天内完成", TestAiContextScope);
+        Run("AI 提示词按一天起点给出今天和明天", TestAiPromptDates);
+        Run("AI 回复解析为预览操作", TestAiParseOperations);
+        Run("AI 无效操作、没听懂和有歧义", TestAiParseRejections);
+        Run("AI 预览不改动数据，确认后整批生效并可整批撤销", TestAiApplyAndUndo);
+        Run("AI 请求格式与成功回复", TestAiClientSuccess);
+        Run("AI 失败分类：key 无效、模型错误、限流、服务错误", TestAiClientStatusErrors);
+        Run("AI 超时、取消与断网", TestAiClientTimeoutCancelNetwork);
+        Run("AI 模型拒绝 temperature 时去掉该参数重试一次", TestAiClientTemperatureFallback);
+        Run("API Key 写入 Windows 凭据管理器且不落盘", TestCredentialStore);
+        Run("API Key 按厂商分开保存，旧的共用 key 自动迁移", TestPerProviderKeys);
+        Run("模型测试题：覆盖三类致命错误，只用虚构待办", TestModelTestCoverage);
+        Run("模型测试题：判出致命错误、重试一次、可取消、key 错误中止", TestModelTestRun);
 
         Console.WriteLine("RESULT passed={0} failed={1}", passed, failed);
         return failed == 0 ? 0 : 1;
@@ -114,6 +130,30 @@ internal static class TestRunner
         Equal(LayoutRules.MinimumOpacity, LayoutRules.ClampOpacity(0.01));
         False(LayoutRules.IsDrag(new Point(10, 10), new Point(13, 14), 5));
         True(LayoutRules.IsDrag(new Point(10, 10), new Point(16, 10), 5));
+
+        Size bubble = new Size(240, 90);
+        Point[] anchors = { new Point(900, 500), new Point(1800, 900), new Point(20, 900), new Point(1800, 10), new Point(10, 10) };
+        foreach (Point anchor in anchors)
+        {
+            PetLayout plain = LayoutRules.Compute(anchor, new Size(128, 128), new Size(348, 476), work, true, 8);
+            PetLayout withBubble = LayoutRules.Compute(anchor, new Size(128, 128), new Size(348, 476), bubble, work, true, 8);
+            Rectangle petOnScreen = Offset(withBubble.PetBounds, withBubble.WindowBounds);
+            Equal(Offset(plain.PetBounds, plain.WindowBounds), petOnScreen);
+            Rectangle bubbleOnScreen = Offset(withBubble.BubbleBounds, withBubble.WindowBounds);
+            Equal(bubble, bubbleOnScreen.Size);
+            True(work.Contains(withBubble.WindowBounds));
+            False(bubbleOnScreen.IntersectsWith(petOnScreen));
+            if (anchor.Y > 200 && anchor.Y < 800)
+                False(bubbleOnScreen.IntersectsWith(Offset(withBubble.ListBounds, withBubble.WindowBounds)));
+        }
+        PetLayout hiddenList = LayoutRules.Compute(new Point(900, 500), new Size(96, 96), new Size(348, 476), bubble, work, false, 8);
+        True(hiddenList.ListBounds.IsEmpty);
+        Equal(new Rectangle(828, 402, 240, 90), Offset(hiddenList.BubbleBounds, hiddenList.WindowBounds));
+    }
+
+    private static Rectangle Offset(Rectangle relative, Rectangle window)
+    {
+        return new Rectangle(relative.X + window.X, relative.Y + window.Y, relative.Width, relative.Height);
     }
 
     private static void TestTodoOperations()
@@ -217,6 +257,539 @@ internal static class TestRunner
         }
         Equal(7, repository.BackupCount());
         Equal(9, repository.Load().Settings.PetX);
+    }
+
+    private static void TestAiContextScope()
+    {
+        DateTime now = new DateTime(2026, 9, 23, 10, 0, 0);
+        TodoItem open = Item("open", null, null, false, "2026-09-01T00:00:00Z");
+        TodoItem recent = Item("recent", null, null, false, "2026-09-01T00:00:00Z");
+        recent.IsCompleted = true;
+        recent.CompletedAtUtc = now.ToUniversalTime().AddDays(-6).ToString("o");
+        TodoItem old = Item("old", null, null, false, "2026-09-01T00:00:00Z");
+        old.IsCompleted = true;
+        old.CompletedAtUtc = now.ToUniversalTime().AddDays(-8).ToString("o");
+        TodoItem deleted = Item("deleted", null, null, false, "2026-09-01T00:00:00Z");
+        deleted.IsDeleted = true;
+        AiRequestContext context = AiRequestContext.Create(new[] { old, deleted, recent, open }, now, 240);
+        Equal(2, context.Items.Count);
+        Equal("t1", context.Items[0].Key);
+        Equal("open", context.Resolve("t1").Title);
+        Equal("recent", context.Resolve("t2").Title);
+        True(context.Resolve("t3") == null);
+        string prompt = context.SystemPrompt();
+        True(prompt.Contains("open"));
+        True(prompt.Contains("recent"));
+        False(prompt.Contains("标题：old"));
+        False(prompt.Contains("标题：deleted"));
+    }
+
+    private static void TestAiPromptDates()
+    {
+        AiRequestContext early = AiRequestContext.Create(new TodoItem[0], new DateTime(2026, 9, 23, 1, 0, 0), 240);
+        string prompt = early.SystemPrompt();
+        True(prompt.Contains("「今天」是 2026-09-22 星期二，「明天」是 2026-09-23 星期三"));
+        AiRequestContext morning = AiRequestContext.Create(new TodoItem[0], new DateTime(2026, 9, 23, 4, 0, 0), 240);
+        True(morning.SystemPrompt().Contains("「今天」是 2026-09-23 星期三，「明天」是 2026-09-24 星期四"));
+        True(prompt.Contains("2026-09-28 星期一（下周一）"));
+    }
+
+    private static void TestAiParseOperations()
+    {
+        DateTime now = new DateTime(2026, 9, 23, 10, 0, 0);
+        TodoItem report = Item("周报", "2026-09-24", null, false, "2026-09-01T00:00:00Z");
+        TodoItem gym = Item("健身", null, null, false, "2026-09-01T00:00:00Z");
+        TodoItem trash = Item("扔垃圾", null, null, false, "2026-09-01T00:00:00Z");
+        AiRequestContext context = AiRequestContext.Create(new[] { report, gym, trash }, now, 240);
+        string aliasReport = AliasOf(context, report), aliasGym = AliasOf(context, gym), aliasTrash = AliasOf(context, trash);
+        string reply = "```json\n{\"status\":\"ok\",\"operations\":[" +
+            "{\"op\":\"add\",\"title\":\"复盘会\",\"date\":\"2026-09-24\",\"time\":\"15:00\",\"starred\":true}," +
+            "{\"op\":\"add\",\"title\":\"交电费\",\"date\":\"2026-09-23\",\"time\":\"08:00\"}," +
+            "{\"op\":\"update\",\"id\":\"" + aliasReport + "\",\"date\":\"2026-09-25\",\"time\":null}," +
+            "{\"op\":\"complete\",\"id\":\"" + aliasGym + "\"}," +
+            "{\"op\":\"delete\",\"id\":\"" + aliasTrash + "\"}]}\n```";
+        AiPlan plan = AiPlanParser.Parse(reply, context);
+        Equal(AiPlanStatus.Ok, plan.Status);
+        Equal(5, plan.ValidCount);
+        Equal("新增：9月24日 星期四 15:00（明天） 复盘会 ★", plan.Operations[0].Summary);
+        False(plan.Operations[0].PastTimeWarning);
+        True(plan.Operations[1].PastTimeWarning);
+        Equal("修改「周报」：时间改为 9月25日 星期五（后天）", plan.Operations[2].Summary);
+        Equal(AiOperationKind.Complete, plan.Operations[3].Kind);
+        Equal(gym.Id, plan.Operations[3].TargetId);
+        Equal("删除：「扔垃圾」", plan.Operations[4].Summary);
+        Equal("删除 1 条，新增 2 条，修改 1 条，状态变更 1 条", plan.Headline());
+    }
+
+    private static void TestAiParseRejections()
+    {
+        DateTime now = new DateTime(2026, 9, 23, 10, 0, 0);
+        TodoItem done = Item("已完成的事", null, null, false, "2026-09-01T00:00:00Z");
+        done.IsCompleted = true;
+        done.CompletedAtUtc = now.ToUniversalTime().ToString("o");
+        TodoItem meetingA = Item("产品会", "2026-09-24", "10:00", false, "2026-09-01T00:00:00Z");
+        TodoItem meetingB = Item("周会", "2026-09-24", "14:00", true, "2026-09-01T00:00:00Z");
+        AiRequestContext context = AiRequestContext.Create(new[] { done, meetingA, meetingB }, now, 240);
+        string aliasDone = AliasOf(context, done), aliasA = AliasOf(context, meetingA), aliasB = AliasOf(context, meetingB);
+
+        AiPlan plan = AiPlanParser.Parse("{\"status\":\"ok\",\"operations\":[" +
+            "{\"op\":\"complete\",\"id\":\"" + aliasDone + "\"}," +
+            "{\"op\":\"delete\",\"id\":null,\"ref\":\"体检\"}," +
+            "{\"op\":\"add\",\"title\":\"只有时刻\",\"date\":null,\"time\":\"09:00\"}," +
+            "{\"op\":\"star\",\"id\":\"" + aliasB + "\"}," +
+            "{\"op\":\"delete\",\"id\":\"" + aliasA + "\"}," +
+            "{\"op\":\"update\",\"id\":\"" + aliasA + "\",\"title\":\"新标题\"}," +
+            "{\"op\":\"rename_all\"}]}", context);
+        Equal(AiPlanStatus.Ok, plan.Status);
+        Equal(1, plan.ValidCount);
+        False(plan.Operations[0].IsValid);
+        False(plan.Operations[1].IsValid);
+        Equal("删除：「体检」", plan.Operations[1].Summary);
+        False(plan.Operations[2].IsValid);
+        False(plan.Operations[3].IsValid);
+        True(plan.Operations[4].IsValid);
+        False(plan.Operations[5].IsValid);
+        False(plan.Operations[6].IsValid);
+
+        AiPlan ambiguous = AiPlanParser.Parse("{\"status\":\"ambiguous\",\"message\":\"有两个会\",\"candidates\":[\"" + aliasA + "\",\"" + aliasB + "\",\"t99\"]}", context);
+        Equal(AiPlanStatus.Ambiguous, ambiguous.Status);
+        Equal(0, ambiguous.Operations.Count);
+        Equal(2, ambiguous.CandidateTitles.Count);
+
+        AiPlan prose = AiPlanParser.Parse("抱歉，我不太明白你的意思。", context);
+        Equal(AiPlanStatus.Unclear, prose.Status);
+        Equal("抱歉，我不太明白你的意思。", prose.Message);
+        AiPlan empty = AiPlanParser.Parse("{\"status\":\"ok\",\"operations\":[]}", context);
+        Equal(AiPlanStatus.Unclear, empty.Status);
+        Equal(AiPlanParser.MaxShownReplyLength + 1, AiPlanParser.TruncateReply(new string('字', 500)).Length);
+    }
+
+    private static void TestAiApplyAndUndo()
+    {
+        string root = NewTestDirectory();
+        string path = Path.Combine(root, "data.json");
+        TodoService service = new TodoService(new TodoRepository(path));
+        TodoItem report = service.Create("周报", "虚构备注", "2026-09-24", null, false);
+        TodoItem gym = service.Create("健身", null, null, null, false);
+        TodoItem trash = service.Create("扔垃圾", null, null, null, true);
+        byte[] beforeParse = File.ReadAllBytes(path);
+
+        DateTime now = new DateTime(2026, 9, 23, 10, 0, 0);
+        AiRequestContext context = AiRequestContext.Create(service.Data.Todos, now, 240);
+        AiPlan plan = AiPlanParser.Parse("{\"status\":\"ok\",\"operations\":[" +
+            "{\"op\":\"add\",\"title\":\"复盘会\",\"date\":\"2026-09-24\",\"time\":\"15:00\",\"starred\":true}," +
+            "{\"op\":\"update\",\"id\":\"" + AliasOf(context, report) + "\",\"title\":\"周报终稿\",\"date\":\"2026-09-25\",\"time\":\"18:00\"}," +
+            "{\"op\":\"complete\",\"id\":\"" + AliasOf(context, gym) + "\"}," +
+            "{\"op\":\"unstar\",\"id\":\"" + AliasOf(context, trash) + "\"}," +
+            "{\"op\":\"delete\",\"id\":\"" + AliasOf(context, trash) + "\"}]}", context);
+        Equal(5, plan.ValidCount);
+        True(File.ReadAllBytes(path).SequenceEqual(beforeParse));
+        Equal(3, service.Data.Todos.Count);
+        Equal("周报", service.Find(report.Id).Title);
+
+        List<AiOperation> confirmed = new List<AiOperation> { plan.Operations[0], plan.Operations[1], plan.Operations[2], plan.Operations[4] };
+        AiUndo undo = service.ApplyAi(confirmed);
+        RoostData applied = new TodoRepository(path).Load();
+        Equal(4, applied.Todos.Count);
+        TodoItem created = applied.Todos.First(delegate(TodoItem item) { return item.Title == "复盘会"; });
+        True(created.IsStarred);
+        Equal("15:00", created.DueTime);
+        TodoItem updated = applied.Todos.First(delegate(TodoItem item) { return item.Id == report.Id; });
+        Equal("周报终稿", updated.Title);
+        Equal("2026-09-25", updated.DueDate);
+        Equal("虚构备注", updated.Notes);
+        True(applied.Todos.First(delegate(TodoItem item) { return item.Id == gym.Id; }).IsCompleted);
+        TodoItem removed = applied.Todos.First(delegate(TodoItem item) { return item.Id == trash.Id; });
+        True(removed.IsDeleted);
+        True(removed.IsStarred);
+
+        service.UndoAi(undo);
+        RoostData restored = new TodoRepository(path).Load();
+        Equal(3, restored.Todos.Count);
+        Equal("周报", restored.Todos.First(delegate(TodoItem item) { return item.Id == report.Id; }).Title);
+        Equal("2026-09-24", restored.Todos.First(delegate(TodoItem item) { return item.Id == report.Id; }).DueDate);
+        False(restored.Todos.First(delegate(TodoItem item) { return item.Id == gym.Id; }).IsCompleted);
+        False(restored.Todos.First(delegate(TodoItem item) { return item.Id == trash.Id; }).IsDeleted);
+    }
+
+    private static void TestAiClientSuccess()
+    {
+        const string key = "sk-test-FAKE-0000";
+        FakeServer server = FakeServer.Start(200, "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"status\\\":\\\"unclear\\\"}\"}}]}", 0);
+        AiEndpoint endpoint = new AiEndpoint { BaseUrl = server.BaseUrl + "/v1/", Model = "fake-model", ApiKey = key };
+        string content = new AiClient().CompleteAsync(endpoint, "系统", "明天开会", 512, CancellationToken.None).GetAwaiter().GetResult();
+        Equal("{\"status\":\"unclear\"}", content);
+        string request = server.WaitRequest();
+        True(request.StartsWith("POST /v1/chat/completions "));
+        True(request.Contains("Authorization: Bearer " + key));
+        True(request.Contains("\"model\":\"fake-model\""));
+        True(request.Contains("\"temperature\":0"));
+        True(request.Contains("明天开会"));
+        Equal("https://x.example/v1/chat/completions", new AiEndpoint { BaseUrl = "https://x.example/v1/chat/completions/" }.ChatCompletionsUrl);
+    }
+
+    private static void TestAiClientStatusErrors()
+    {
+        const string key = "sk-test-FAKE-0000";
+        ExpectFailure(401, "{\"error\":{\"message\":\"Incorrect API key provided: " + key + "\"}}", AiFailureKind.InvalidKey, key);
+        ExpectFailure(403, "{}", AiFailureKind.InvalidKey, key);
+        ExpectFailure(404, "{\"error\":{\"message\":\"model not found\"}}", AiFailureKind.NotFound, key);
+        ExpectFailure(400, "{\"error\":{\"message\":\"Model Not Exist\"}}", AiFailureKind.Rejected, key);
+        ExpectFailure(402, "{\"error\":{\"message\":\"Insufficient Balance\"}}", AiFailureKind.Quota, key);
+        ExpectFailure(429, "{\"error\":\"rate limited\"}", AiFailureKind.RateLimited, key);
+        ExpectFailure(503, "upstream down", AiFailureKind.Server, key);
+        ExpectFailure(200, "<html>not json</html>", AiFailureKind.BadResponse, key);
+    }
+
+    private static void TestAiClientTimeoutCancelNetwork()
+    {
+        AiClient fast = new AiClient(TimeSpan.FromMilliseconds(400));
+        FakeServer slow = FakeServer.Start(200, "{}", 3000);
+        AiException timeout = Catch(delegate
+        {
+            fast.CompleteAsync(new AiEndpoint { BaseUrl = slow.BaseUrl, Model = "m", ApiKey = "k" }, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult();
+        });
+        Equal(AiFailureKind.Timeout, timeout.Kind);
+        True(timeout.Retryable);
+
+        FakeServer slowAgain = FakeServer.Start(200, "{}", 3000);
+        CancellationTokenSource cancel = new CancellationTokenSource(150);
+        AiException cancelled = Catch(delegate
+        {
+            new AiClient().CompleteAsync(new AiEndpoint { BaseUrl = slowAgain.BaseUrl, Model = "m", ApiKey = "k" }, "s", "u", 16, cancel.Token).GetAwaiter().GetResult();
+        });
+        Equal(AiFailureKind.Cancelled, cancelled.Kind);
+
+        TcpListener closed = new TcpListener(IPAddress.Loopback, 0);
+        closed.Start();
+        int port = ((IPEndPoint)closed.LocalEndpoint).Port;
+        closed.Stop();
+        AiException network = Catch(delegate
+        {
+            new AiClient().CompleteAsync(new AiEndpoint { BaseUrl = "http://127.0.0.1:" + port, Model = "m", ApiKey = "k" }, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult();
+        });
+        Equal(AiFailureKind.Network, network.Kind);
+        Equal(AiFailureKind.NotFound, Catch(delegate
+        {
+            new AiClient().CompleteAsync(new AiEndpoint { BaseUrl = "not a url", Model = "m", ApiKey = "k" }, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult();
+        }).Kind);
+    }
+
+    private static void TestAiClientTemperatureFallback()
+    {
+        const string rejected = "{\"error\":{\"message\":\"invalid temperature: only 1 is allowed for this model\",\"type\":\"invalid_request_error\"}}";
+        const string ok = "{\"choices\":[{\"message\":{\"content\":\"好的\"}}]}";
+
+        FakeServer fallback = FakeServer.Start(new[] { 400, 200 }, new[] { rejected, ok });
+        AiEndpoint endpoint = new AiEndpoint { BaseUrl = fallback.BaseUrl, Model = "kimi-k2.6", ApiKey = "k" };
+        Equal("好的", new AiClient().CompleteAsync(endpoint, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult());
+        List<string> requests = fallback.WaitRequests();
+        Equal(2, requests.Count);
+        True(requests[0].Contains("\"temperature\":0"));
+        False(requests[1].Contains("temperature"));
+        True(requests[1].Contains("\"model\":\"kimi-k2.6\""));
+
+        FakeServer twice = FakeServer.Start(new[] { 400, 400, 200 }, new[] { rejected, rejected, ok });
+        endpoint.BaseUrl = twice.BaseUrl;
+        Equal(AiFailureKind.Rejected, Catch(delegate
+        {
+            new AiClient().CompleteAsync(endpoint, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult();
+        }).Kind);
+        Equal(2, twice.WaitRequests().Count);
+
+        FakeServer unrelated = FakeServer.Start(new[] { 400, 200 }, new[] { "{\"error\":{\"message\":\"Model Not Exist\"}}", ok });
+        endpoint.BaseUrl = unrelated.BaseUrl;
+        Equal(AiFailureKind.Rejected, Catch(delegate
+        {
+            new AiClient().CompleteAsync(endpoint, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult();
+        }).Kind);
+        Equal(1, unrelated.WaitRequests().Count);
+    }
+
+    private static void TestPerProviderKeys()
+    {
+        string previous = Environment.GetEnvironmentVariable("ROOST_CREDENTIAL_TARGET");
+        string prefix = "Roost/Test/" + Guid.NewGuid().ToString("N");
+        Environment.SetEnvironmentVariable("ROOST_CREDENTIAL_TARGET", prefix);
+        List<string> targets = new List<string> { prefix };
+        try
+        {
+            string deepseek = CredentialStore.ApiKeyTargetFor("deepseek", "https://api.deepseek.com/v1");
+            string qwen = CredentialStore.ApiKeyTargetFor("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1");
+            string custom = CredentialStore.ApiKeyTargetFor(AiPresets.CustomId, "https://API.Example.com/v1/");
+            string removedPreset = CredentialStore.ApiKeyTargetFor("kimi", "https://api.moonshot.cn/v1");
+            Equal(prefix + "/deepseek", deepseek);
+            Equal(prefix + "/qwen", qwen);
+            Equal(prefix + "/custom/api.example.com", custom);
+            Equal(prefix + "/custom/api.moonshot.cn", removedPreset);
+            True(CredentialStore.ApiKeyTargetFor(AiPresets.CustomId, "not a url") == null);
+            Equal("sk-…WXYZ", CredentialStore.MaskKey("sk-test-FAKE-1234WXYZ"));
+            Equal("…WXYZ", CredentialStore.MaskKey("ark-test-FAKE-WXYZ"));
+            Equal("（已保存）", CredentialStore.MaskKey("short-key"));
+            Equal(string.Empty, CredentialStore.MaskKey(null));
+            targets.AddRange(new[] { deepseek, qwen, custom, removedPreset });
+
+            CredentialStore.Write(deepseek, "sk-test-FAKE-deepseek");
+            True(CredentialStore.ReadApiKey(new RoostSettings { AiPresetId = "qwen", AiBaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1", AiModel = "m" }) == null);
+            Equal("sk-test-FAKE-deepseek", CredentialStore.ReadApiKey(new RoostSettings { AiPresetId = "deepseek", AiBaseUrl = "https://api.deepseek.com/v1", AiModel = "m" }));
+
+            // 旧的共用 key 迁移到当前所选厂商名下，旧位置删除。
+            CredentialStore.Write(prefix, "sk-test-FAKE-legacy");
+            RoostSettings current = new RoostSettings { AiPresetId = "qwen", AiBaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1", AiModel = "m" };
+            True(CredentialStore.MigrateLegacyApiKey(current));
+            Equal("sk-test-FAKE-legacy", CredentialStore.Read(qwen));
+            True(CredentialStore.Read(prefix) == null);
+            False(CredentialStore.MigrateLegacyApiKey(current));
+
+            // 目标厂商已经有 key 时不覆盖；没配置模型时不迁移。
+            CredentialStore.Write(prefix, "sk-test-FAKE-legacy-2");
+            True(CredentialStore.MigrateLegacyApiKey(new RoostSettings { AiPresetId = "deepseek", AiBaseUrl = "https://api.deepseek.com/v1", AiModel = "m" }));
+            Equal("sk-test-FAKE-deepseek", CredentialStore.Read(deepseek));
+            CredentialStore.Write(prefix, "sk-test-FAKE-legacy-3");
+            False(CredentialStore.MigrateLegacyApiKey(new RoostSettings()));
+            Equal("sk-test-FAKE-legacy-3", CredentialStore.Read(prefix));
+        }
+        finally
+        {
+            foreach (string target in targets) CredentialStore.Delete(target);
+            Environment.SetEnvironmentVariable("ROOST_CREDENTIAL_TARGET", previous);
+        }
+    }
+
+    private static AiEvalSuite LoadSuite()
+    {
+        return AiEvalSuite.Load(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "assets", "ai-eval", "cases.json"));
+    }
+
+    private static void TestModelTestCoverage()
+    {
+        AiEvalSuite suite = LoadSuite();
+        List<AiEvalCase> cases = suite.SelfTestCases();
+        True(cases.Count >= 12 && cases.Count <= 20);
+        HashSet<string> categories = new HashSet<string>(cases.Select(delegate(AiEvalCase item) { return item.Category; }));
+        foreach (string category in new[] { "新增", "修改", "完成", "删除", "歧义", "没听懂", "不存在", "不误伤" })
+            if (!categories.Contains(category)) throw new Exception("模型测试题缺少类别：" + category);
+        True(cases.Count(delegate(AiEvalCase item) { return item.Input.Contains("完"); }) >= 2);
+        True(cases.Count(delegate(AiEvalCase item) { return item.Category == "不存在"; }) >= 2);
+
+        HashSet<string> fixtureTitles = new HashSet<string>(suite.BuildTodos().Select(delegate(TodoItem item) { return item.Title; }));
+        foreach (AiEvalCase item in cases)
+            foreach (KeyValuePair<string, TodoItem> entry in suite.CreateContext(item, suite.BuildTodos()).Items)
+                True(fixtureTitles.Contains(entry.Value.Title));
+        Equal("标记完成「周报」", suite.DescribeExpectation(cases.First(delegate(AiEvalCase item) { return item.Id == "c01"; })));
+    }
+
+    private static void TestModelTestRun()
+    {
+        AiEvalSuite suite = LoadSuite();
+        List<AiEvalCase> cases = suite.SelfTestCases();
+
+        List<AiEvalResult> unclear = suite.RunAsync(cases, delegate(AiRequestContext context, string input, CancellationToken token)
+        {
+            return Task.FromResult("{\"status\":\"unclear\",\"message\":\"不明白\"}");
+        }, null, CancellationToken.None).GetAwaiter().GetResult();
+        Equal(cases.Count, unclear.Count);
+        Equal(cases.Count(delegate(AiEvalCase item) { return item.Expect == "unclear" || item.Expect == "none"; }), unclear.Count(delegate(AiEvalResult result) { return result.Pass; }));
+        True(unclear.All(delegate(AiEvalResult result) { return result.Critical.Count == 0; }));
+
+        List<AiEvalResult> reckless = suite.RunAsync(cases, delegate(AiRequestContext context, string input, CancellationToken token)
+        {
+            string target = context.Items.First(delegate(KeyValuePair<string, TodoItem> entry) { return entry.Value.Title == "周报"; }).Key;
+            return Task.FromResult("{\"status\":\"ok\",\"operations\":[{\"op\":\"delete\",\"id\":\"" + target + "\"}]}");
+        }, null, CancellationToken.None).GetAwaiter().GetResult();
+        True(reckless.First(delegate(AiEvalResult result) { return result.Case.Id == "c01"; }).Critical.Contains(AiEvalSuite.CriticalDoneAsDelete));
+        True(reckless.First(delegate(AiEvalResult result) { return result.Case.Id == "t03"; }).Critical.Contains(AiEvalSuite.CriticalUntouched));
+        True(reckless.First(delegate(AiEvalResult result) { return result.Case.Id == "e01"; }).Critical.Contains(AiEvalSuite.CriticalNonexistent));
+
+        int calls = 0;
+        List<AiEvalResult> flaky = suite.RunAsync(cases.Take(1).ToList(), delegate(AiRequestContext context, string input, CancellationToken token)
+        {
+            calls++;
+            if (calls == 1) throw new AiException(AiFailureKind.Network, "连不上");
+            return Task.FromResult("{\"status\":\"unclear\"}");
+        }, null, CancellationToken.None).GetAwaiter().GetResult();
+        Equal(2, calls);
+        Equal(1, flaky.Count);
+
+        int progressed = 0;
+        CancellationTokenSource cancel = new CancellationTokenSource();
+        bool cancelled = false;
+        try
+        {
+            suite.RunAsync(cases, delegate(AiRequestContext context, string input, CancellationToken token)
+            {
+                return Task.FromResult("{\"status\":\"unclear\"}");
+            }, delegate(int done) { progressed = done; if (done == 3) cancel.Cancel(); }, cancel.Token).GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException) { cancelled = true; }
+        True(cancelled);
+        Equal(3, progressed);
+
+        bool aborted = false;
+        try
+        {
+            suite.RunAsync(cases, delegate(AiRequestContext context, string input, CancellationToken token)
+            {
+                throw new AiException(AiFailureKind.InvalidKey, "key 无效");
+            }, null, CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch (AiException exception) { aborted = exception.Kind == AiFailureKind.InvalidKey; }
+        True(aborted);
+    }
+
+    private static void TestCredentialStore()
+    {
+        string target = "Roost/Test/" + Guid.NewGuid().ToString("N");
+        const string secret = "sk-test-FAKE-凭据-1234";
+        try
+        {
+            True(CredentialStore.Read(target) == null);
+            CredentialStore.Write(target, secret);
+            Equal(secret, CredentialStore.Read(target));
+            CredentialStore.Write(target, secret + "-v2");
+            Equal(secret + "-v2", CredentialStore.Read(target));
+        }
+        finally
+        {
+            CredentialStore.Delete(target);
+        }
+        True(CredentialStore.Read(target) == null);
+        CredentialStore.Delete(target);
+
+        string root = NewTestDirectory();
+        TodoService service = new TodoService(new TodoRepository(Path.Combine(root, "data.json")));
+        service.Data.Settings.AiPresetId = "deepseek";
+        service.Data.Settings.AiBaseUrl = "https://api.deepseek.com/v1";
+        service.Data.Settings.AiModel = "deepseek-flash";
+        service.SaveSettings();
+        foreach (string file in Directory.GetFiles(root, "*", SearchOption.AllDirectories))
+        {
+            string text = File.ReadAllText(file);
+            False(text.Contains("sk-"));
+            False(text.Contains("AiConfigured"));
+        }
+        True(new TodoRepository(Path.Combine(root, "data.json")).Load().Settings.AiConfigured);
+    }
+
+    private static void ExpectFailure(int status, string body, AiFailureKind kind, string key)
+    {
+        FakeServer server = FakeServer.Start(status, body, 0);
+        AiException failure = Catch(delegate
+        {
+            new AiClient().CompleteAsync(new AiEndpoint { BaseUrl = server.BaseUrl, Model = "m", ApiKey = key }, "s", "u", 16, CancellationToken.None).GetAwaiter().GetResult();
+        });
+        if (failure.Kind != kind) throw new Exception(string.Format("status {0}: expected {1}, actual {2}", status, kind, failure.Kind));
+        False(failure.Message.Contains(key));
+    }
+
+    private static AiException Catch(Action action)
+    {
+        try { action(); }
+        catch (AiException exception) { return exception; }
+        throw new Exception("expected AiException");
+    }
+
+    private sealed class FakeServer
+    {
+        private readonly TcpListener listener;
+        private readonly Task<List<string>> handler;
+
+        internal string BaseUrl { get; private set; }
+
+        private FakeServer(int[] statuses, string[] bodies, int delayMilliseconds)
+        {
+            listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            BaseUrl = "http://127.0.0.1:" + ((IPEndPoint)listener.LocalEndpoint).Port;
+            handler = Task.Run(delegate { return ServeAll(statuses, bodies, delayMilliseconds); });
+        }
+
+        internal static FakeServer Start(int status, string body, int delayMilliseconds)
+        {
+            return new FakeServer(new[] { status }, new[] { body }, delayMilliseconds);
+        }
+
+        internal static FakeServer Start(int[] statuses, string[] bodies)
+        {
+            return new FakeServer(statuses, bodies, 0);
+        }
+
+        internal string WaitRequest()
+        {
+            return handler.GetAwaiter().GetResult()[0];
+        }
+
+        // 按顺序应答；客户端不再发请求时（等待 2 秒无连接）提前结束。
+        internal List<string> WaitRequests()
+        {
+            return handler.GetAwaiter().GetResult();
+        }
+
+        private List<string> ServeAll(int[] statuses, string[] bodies, int delayMilliseconds)
+        {
+            List<string> requests = new List<string>();
+            try
+            {
+                for (int index = 0; index < statuses.Length; index++)
+                {
+                    if (index > 0 && !listener.Server.Poll(2000000, SelectMode.SelectRead)) break;
+                    requests.Add(Serve(statuses[index], bodies[index], delayMilliseconds));
+                }
+            }
+            finally
+            {
+                listener.Stop();
+            }
+            return requests;
+        }
+
+        private string Serve(int status, string body, int delayMilliseconds)
+        {
+            using (TcpClient client = listener.AcceptTcpClient())
+            using (NetworkStream stream = client.GetStream())
+            {
+                MemoryStream received = new MemoryStream();
+                byte[] buffer = new byte[8192];
+                int headerEnd = -1, contentLength = 0;
+                while (true)
+                {
+                    int read = stream.Read(buffer, 0, buffer.Length);
+                    if (read <= 0) break;
+                    received.Write(buffer, 0, read);
+                    string sofar = Encoding.UTF8.GetString(received.ToArray());
+                    if (headerEnd < 0)
+                    {
+                        headerEnd = sofar.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+                        if (headerEnd >= 0)
+                        {
+                            foreach (string line in sofar.Substring(0, headerEnd).Split(new[] { "\r\n" }, StringSplitOptions.None))
+                                if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
+                                    contentLength = int.Parse(line.Substring(15).Trim());
+                        }
+                    }
+                    if (headerEnd >= 0 && received.Length >= Encoding.UTF8.GetByteCount(sofar.Substring(0, headerEnd + 4)) + contentLength) break;
+                }
+                string request = Encoding.UTF8.GetString(received.ToArray());
+                if (delayMilliseconds > 0) Thread.Sleep(delayMilliseconds);
+                byte[] payload = Encoding.UTF8.GetBytes(body);
+                string head = string.Format("HTTP/1.1 {0} X\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {1}\r\nConnection: close\r\n\r\n", status, payload.Length);
+                try
+                {
+                    byte[] headBytes = Encoding.ASCII.GetBytes(head);
+                    stream.Write(headBytes, 0, headBytes.Length);
+                    stream.Write(payload, 0, payload.Length);
+                }
+                catch (IOException) { }
+                return request;
+            }
+        }
+    }
+
+    private static string AliasOf(AiRequestContext context, TodoItem item)
+    {
+        foreach (KeyValuePair<string, TodoItem> entry in context.Items)
+            if (entry.Value.Id == item.Id) return entry.Key;
+        throw new Exception("alias not found");
     }
 
     private static int RunStorageWorker(string[] args)

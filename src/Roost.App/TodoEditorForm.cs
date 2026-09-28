@@ -73,6 +73,7 @@ namespace Roost.App
                 starred.Checked = item.IsStarred;
             }
             UpdateDateControls();
+            DpiScale.Apply(this);
         }
 
         private void UpdateDateControls()
