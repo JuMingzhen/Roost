@@ -23,9 +23,8 @@ $layoutPath = Join-Path $artifactRoot 'layout.json'
 if ($LASTEXITCODE -ne 0) { throw '真实 DPI 下的窗口排版验证失败。' }
 
 $system = Get-Content -Raw -LiteralPath $systemPath | ConvertFrom-Json
-$pixel = Get-Content -Raw -LiteralPath $pixelPath
-Get-Content -Raw -LiteralPath $layoutPath | ConvertFrom-Json
-$layout = Get-Content -Raw -LiteralPath $layoutPath | ConvertFrom-Json
+$pixel = Get-Content -Raw -LiteralPath $pixelPath | ConvertFrom-Json
+$layout = Get-Content -Raw -Encoding UTF8 -LiteralPath $layoutPath | ConvertFrom-Json
 if ($system.actualScalePercent -ne $ExpectedScalePercent -or $pixel.actualScalePercent -ne $ExpectedScalePercent -or $layout.actualScalePercent -ne $ExpectedScalePercent) {
     throw "当前验证进程检测到的缩放不是 $ExpectedScalePercent%：system=$($system.actualScalePercent)%，pixel=$($pixel.actualScalePercent)%，layout=$($layout.actualScalePercent)%。请确认 Windows 缩放已经生效后重跑。"
 }
@@ -37,4 +36,4 @@ Write-Output "PASS real Windows scale $ExpectedScalePercent%"
 Write-Output "Evidence: $artifactRoot"
 Get-Content -Raw -LiteralPath $systemPath
 Get-Content -Raw -LiteralPath $pixelPath
-
+Get-Content -Raw -Encoding UTF8 -LiteralPath $layoutPath

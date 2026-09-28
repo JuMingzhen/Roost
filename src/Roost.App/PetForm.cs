@@ -208,7 +208,7 @@ namespace Roost.App
             Rectangle work = Screen.PrimaryScreen.WorkingArea;
             petAnchor = todos.Data.Settings.HasSavedPosition
                 ? new Point(todos.Data.Settings.PetX, todos.Data.Settings.PetY)
-                : new Point(work.Right - size - 24, work.Bottom - size - 24);
+                : new Point(work.Right - size - DpiScale.Px(24), work.Bottom - size - DpiScale.Px(24));
             ApplyLayout();
             RefreshList();
             UpdateTalkState();
@@ -301,7 +301,8 @@ namespace Roost.App
         {
             int[] sizes = new int[] { 96, 128, 160 };
             int index = Math.Max(0, Math.Min(2, todos.Data.Settings.SizeTier - 1));
-            return sizes[index];
+            // 档位按 100% 缩放定义，随系统缩放同比放大（最近邻绘制，像素门禁覆盖这些尺寸）。
+            return DpiScale.Px(sizes[index]);
         }
 
         private void ApplyLayout()
@@ -345,7 +346,7 @@ namespace Roost.App
         {
             if (!sprite.Capture || e.Button != MouseButtons.Left) return;
             Point current = Cursor.Position;
-            if (!dragStarted && LayoutRules.IsDrag(mouseDownScreen, current, 5))
+            if (!dragStarted && LayoutRules.IsDrag(mouseDownScreen, current, DpiScale.Px(5)))
             {
                 dragStarted = true;
                 UpdatePetState();
@@ -365,7 +366,7 @@ namespace Roost.App
             {
                 int size = PetSize();
                 Rectangle work = Screen.FromPoint(petAnchor).WorkingArea;
-                petAnchor = LayoutRules.SnapPetPosition(petAnchor, new Size(size, size), work, 12);
+                petAnchor = LayoutRules.SnapPetPosition(petAnchor, new Size(size, size), work, DpiScale.Px(12));
                 SavePosition();
                 ApplyLayout();
                 dragStarted = false;

@@ -207,10 +207,11 @@ internal static class VerificationRunner
             HashSet<int> colors = view.SourceColorsForTest(state);
             foreach (int size in sizes)
             {
-                view.Size = new Size(size, size);
+                int shown = DpiScale.Px(size);
+                view.Size = new Size(shown, shown);
                 host.ClientSize = view.Size;
                 Pump(30);
-                using (Bitmap capture = new Bitmap(size, size, PixelFormat.Format32bppArgb))
+                using (Bitmap capture = new Bitmap(shown, shown, PixelFormat.Format32bppArgb))
                 {
                     view.DrawToBitmap(capture, new Rectangle(Point.Empty, capture.Size));
                     int unexpected = 0;
@@ -230,7 +231,7 @@ internal static class VerificationRunner
                     actualCases.Add(new Dictionary<string, object>
                     {
                         { "actualScalePercent", actualScale }, { "state", state.ToString() },
-                        { "sizeTierPixels", size }, { "spritePixels", spritePixels },
+                        { "sizeTierPixels", size }, { "physicalPixels", shown }, { "spritePixels", spritePixels },
                         { "unexpectedPixels", unexpected }, { "pass", pass }
                     });
                 }
