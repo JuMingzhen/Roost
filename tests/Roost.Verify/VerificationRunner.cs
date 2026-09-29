@@ -83,6 +83,8 @@ internal static class VerificationRunner
         TodoService service = new TodoService(new TodoRepository(Path.Combine(root, "data.json")));
         service.Data.Settings.FirstRunCompleted = true;
         service.Data.Settings.ListVisible = true;
+        // 低于 100% 的透明度会让窗口变成分层窗口，圆角和点击穿透要在这种情况下也成立。
+        service.Data.Settings.Opacity = 0.85;
         service.SaveSettings();
         string assets = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "cat");
         uint message = NativeMethods.RegisterWindowMessage("Roost.Verify." + Guid.NewGuid().ToString("N"));
@@ -93,6 +95,8 @@ internal static class VerificationRunner
         pet.Show();
         pet.BringToFront();
         Pump(500);
+        List<string> cornerColors = new List<string>();
+        bool listCornersRounded = ListCornersRounded(pet, sink.BackColor, Path.ChangeExtension(outputPath, ".corner.png"), cornerColors);
 
         List<Point> blank = FindPoints(pet, false, 12);
         foreach (Point point in blank)
@@ -120,7 +124,7 @@ internal static class VerificationRunner
         bool visibleBeforeHotkey = pet.Visible;
         NativeMethods.SendMessageForTest(pet.Handle, NativeMethods.WM_HOTKEY, new IntPtr(NativeMethods.HOTKEY_ID), IntPtr.Zero);
         Pump(100);
-        bool hiddenByHotkey = visibleBeforeHotkey && !pet.Visible;
+        bool hiddenByHotkey = visibleBeforeHotkey && !pet.Visible && !pet.ListWindowForTest.Visible;
         int frameBefore = pet.AnimationFrameCountForTest;
         Pump(400);
         bool pausedWhileHidden = pet.AnimationFrameCountForTest == frameBefore;
@@ -131,7 +135,7 @@ internal static class VerificationRunner
         pet.EvaluateFullscreenForTest(false);
         bool restoredAfterFullscreen = pet.Visible;
 
-        bool pass = blank.Count == 12 && blankClicks == 12 && petClickHandled && trayLabels && settingsEntries &&
+        bool pass = blank.Count == 12 && blankClicks == 12 && petClickHandled && trayLabels && settingsEntries && listCornersRounded &&
                     pet.HotKeyRegisteredForTest && hiddenByHotkey && pausedWhileHidden && hiddenByFullscreen && restoredAfterFullscreen;
         Dictionary<string, object> result = Base("system");
         result["actualScalePercent"] = GetScalePercent(pet);
@@ -142,6 +146,8 @@ internal static class VerificationRunner
         result["settingsOpensFromListButton"] = settingsFromList;
         result["petRightClickMenuHasSettings"] = pet.PetMenuHasSettingsForTest;
         result["trayIconIsCat"] = pet.TrayIconCustomForTest;
+        result["listCornersRounded"] = listCornersRounded;
+        result["listCornerColors"] = cornerColors.ToArray();
         result["globalHotkeyRegistered"] = pet.HotKeyRegisteredForTest;
         result["hotkeyHandlerHides"] = hiddenByHotkey;
         result["animationPausedWhileHidden"] = pausedWhileHidden;
@@ -532,26 +538,25 @@ internal static class VerificationRunner
         string keyTarget = CredentialStore.ApiKeyTargetFor(settings);
         CredentialStore.Write(keyTarget, "sk-verify-FAKE-ABCD");
         SettingsForm settingsForm = new SettingsForm(settings);
-        TabControl tabs = null;
-        foreach (Control control in settingsForm.Controls) if (control is TabControl) tabs = (TabControl)control;
         ShowOffscreen(settingsForm);
         scale = GetScalePercent(settingsForm);
-        foreach (TabPage page in tabs.TabPages)
+        for (int i = 0; i < settingsForm.PageCountForTest; i++)
         {
-            tabs.SelectedTab = page;
+            string name = "设置/" + settingsForm.PageNameForTest(i);
+            settingsForm.ShowPageForTest(i);
             Pump(50);
-            CheckLayout(page, "设置/" + page.Text, problems);
-            Capture(settingsForm, Path.Combine(screenshotDirectory, "settings-" + tabs.SelectedIndex + ".png"));
-            checkedForms.Add("设置/" + page.Text);
+            CheckLayout(settingsForm, name, problems);
+            Capture(settingsForm, Path.Combine(screenshotDirectory, "settings-" + i + ".png"));
+            checkedForms.Add(name);
         }
-        tabs.SelectedIndex = 2;
+        settingsForm.ShowAiTab();
         bool maskedKeyShown = settingsForm.KeyStatusForTest == "已保存：sk-…ABCD";
-        if (!maskedKeyShown) problems.Add("设置/AI 与自启 已保存 key 的掩码显示不对：" + settingsForm.KeyStatusForTest);
+        if (!maskedKeyShown) problems.Add("设置/AI 模型 已保存 key 的掩码显示不对：" + settingsForm.KeyStatusForTest);
         settingsForm.ShowKeyEditorForTest();
         Pump(50);
-        CheckLayout(tabs.SelectedTab, "设置/AI 与自启（更换 key）", problems);
+        CheckLayout(settingsForm, "设置/AI 模型（更换 key）", problems);
         Capture(settingsForm, Path.Combine(screenshotDirectory, "settings-key-editor.png"));
-        checkedForms.Add("设置/AI 与自启（更换 key）");
+        checkedForms.Add("设置/AI 模型（更换 key）");
         settingsForm.Close();
         CredentialStore.Delete(keyTarget);
 
@@ -574,6 +579,8 @@ internal static class VerificationRunner
         TodoService service = new TodoService(new TodoRepository(Path.Combine(root, "data.json")));
         service.Create("虚构待办：给植物浇水", null, "2026-09-24", "09:00", true);
         service.Create("虚构待办：买牙膏", null, null, null, false);
+        foreach (string title in new[] { "虚构待办：一个很长很长的标题用来检查截断是否正常显示", "虚构待办：还书", "虚构待办：订机票", "虚构待办：整理相册", "虚构待办：预约牙医" })
+            service.Create(title, null, DateTime.Today.ToString("yyyy-MM-dd"), null, false);
         service.Data.Settings.FirstRunCompleted = true;
         service.Data.Settings.ListVisible = true;
         service.SaveSettings();
@@ -581,10 +588,53 @@ internal static class VerificationRunner
         pet.Show();
         pet.DisableFullscreenDetectionForTest();
         Pump(300);
-        foreach (Control control in pet.Controls)
-            if (control is Panel && control.Visible && !(control is BubbleView)) CheckLayout(control, "清单", problems);
-        Capture(pet, Path.Combine(screenshotDirectory, "list.png"));
+        CheckLayout(pet.ListPanelForTest, "清单", problems);
+        Capture(pet.ListPanelForTest, Path.Combine(screenshotDirectory, "list.png"));
         checkedForms.Add("清单");
+
+        // 右键菜单：在屏幕上弹出后截图留证，并检查菜单项排版。
+        ContextMenuStrip menu = pet.MenuForTest;
+        menu.Show(new Point(40, 40));
+        Pump(150);
+        CheckLayout(menu, "右键菜单", problems);
+        using (Bitmap shot = new Bitmap(Math.Max(1, menu.Width), Math.Max(1, menu.Height)))
+        {
+            using (Graphics graphics = Graphics.FromImage(shot)) graphics.CopyFromScreen(menu.Location, Point.Empty, shot.Size);
+            shot.Save(Path.Combine(screenshotDirectory, "menu.png"), ImageFormat.Png);
+            string balance = MenuBalanceProblem(shot);
+            if (balance != null) problems.Add("右键菜单 " + balance);
+        }
+        checkedForms.Add("右键菜单");
+        menu.Close();
+        Pump(50);
+
+        pet.ShowBubbleForTest("还没有配置模型，暂时不能跟我说话。不配置也能正常使用本地待办。", "去设置");
+        Pump(100);
+        // 气泡窗口要真的显示出来，否则子控件都算不可见，排版检查会漏掉。
+        if (!pet.BubbleForTest.Visible) problems.Add("气泡窗口没有显示");
+        CheckLayout(pet.BubbleForTest, "气泡", problems);
+        Capture(pet.BubbleForTest, Path.Combine(screenshotDirectory, "bubble.png"));
+        checkedForms.Add("气泡");
+
+        // 编辑模式：全选后批量删除，出现撤销条；撤销后整批恢复。
+        pet.SetEditingForTest(true);
+        pet.SelectAllForTest();
+        Pump(100);
+        CheckLayout(pet.ListPanelForTest, "清单（编辑模式）", problems);
+        Capture(pet.ListPanelForTest, Path.Combine(screenshotDirectory, "list-editing.png"));
+        checkedForms.Add("清单（编辑模式）");
+        pet.DeleteSelectedForTest();
+        Pump(100);
+        int remaining = service.Data.Todos.FindAll(delegate(TodoItem item) { return !item.IsDeleted; }).Count;
+        if (pet.EditingForTest || remaining != 0 || !pet.UndoVisibleForTest || pet.UndoLabelForTest != "已删除 7 条")
+            problems.Add("清单编辑模式批量删除结果不对：剩余 " + remaining + " 条，撤销条「" + pet.UndoLabelForTest + "」");
+        CheckLayout(pet.ListPanelForTest, "清单（撤销条）", problems);
+        Capture(pet.ListPanelForTest, Path.Combine(screenshotDirectory, "list-undo.png"));
+        checkedForms.Add("清单（撤销条）");
+        pet.RunUndoForTest();
+        Pump(100);
+        remaining = service.Data.Todos.FindAll(delegate(TodoItem item) { return !item.IsDeleted; }).Count;
+        if (remaining != 7 || pet.UndoVisibleForTest) problems.Add("清单批量删除撤销后应恢复 7 条，实际 " + remaining + " 条");
         pet.CloseForTest();
 
         foreach (string problem in problems) Console.Error.WriteLine(problem);
@@ -675,6 +725,66 @@ internal static class VerificationRunner
         text = text.Replace("\r", " ").Replace("\n", " ");
         if (text.Length > 12) text = text.Substring(0, 12) + "…";
         return control.GetType().Name + (text.Length > 0 ? "「" + text + "」" : string.Empty);
+    }
+
+    // 菜单里的文字整体应居中：左右留白相近、上下留白相近。文字像素按亮度判断（边框和分隔线都很浅）。
+    private static string MenuBalanceProblem(Bitmap shot)
+    {
+        int left = int.MaxValue, right = -1, top = int.MaxValue, bottom = -1;
+        int corner = (int)Math.Round(10 * DpiScaleForVerify());
+        for (int y = 0; y < shot.Height; y++)
+            for (int x = 0; x < shot.Width; x++)
+            {
+                // 圆角外露出的是下层窗口，不算文字。
+                bool nearX = x < corner || x >= shot.Width - corner, nearY = y < corner || y >= shot.Height - corner;
+                if (nearX && nearY) continue;
+                Color color = shot.GetPixel(x, y);
+                if (color.R * 0.3 + color.G * 0.59 + color.B * 0.11 >= 160) continue;
+                left = Math.Min(left, x); right = Math.Max(right, x);
+                top = Math.Min(top, y); bottom = Math.Max(bottom, y);
+            }
+        if (right < 0) return "截图里找不到文字";
+        int marginLeft = left, marginRight = shot.Width - 1 - right, marginTop = top, marginBottom = shot.Height - 1 - bottom;
+        int tolerance = (int)Math.Round(6 * DpiScaleForVerify());
+        // 右侧留白以最长的一项为准，所以只要求右边不比左边少、也不超出太多。
+        if (marginRight < marginLeft - tolerance || marginRight > marginLeft + tolerance * 3 || Math.Abs(marginTop - marginBottom) > tolerance)
+            return string.Format("文字留白不匀称：左 {0} 右 {1} 上 {2} 下 {3}", marginLeft, marginRight, marginTop, marginBottom);
+        return null;
+    }
+
+    private static float DpiScaleForVerify()
+    {
+        using (Graphics screen = Graphics.FromHwnd(IntPtr.Zero)) return screen.DpiX / 96F;
+    }
+
+    // 清单窗口的四个角在屏幕上应露出下层的测试窗口（系统圆角生效）。左上角截图留作证据。
+    private static bool ListCornersRounded(PetForm pet, Color underlying, string screenshotPath, List<string> cornerColors)
+    {
+        Form list = pet.ListWindowForTest;
+        Point[] corners = new Point[]
+        {
+            new Point(list.Left, list.Top), new Point(list.Right - 1, list.Top),
+            new Point(list.Left, list.Bottom - 1), new Point(list.Right - 1, list.Bottom - 1)
+        };
+        bool pass = pet.ListRoundedForTest && list.Visible;
+        using (Bitmap pixel = new Bitmap(1, 1))
+        using (Graphics graphics = Graphics.FromImage(pixel))
+        {
+            foreach (Point corner in corners)
+            {
+                graphics.CopyFromScreen(corner, Point.Empty, new Size(1, 1));
+                Color color = pixel.GetPixel(0, 0);
+                cornerColors.Add(string.Format("#{0:X2}{1:X2}{2:X2}", color.R, color.G, color.B));
+                // 系统阴影会把角上露出的下层颜色压暗几级，所以按容差比较。
+                if (Math.Abs(color.R - underlying.R) > 24 || Math.Abs(color.G - underlying.G) > 24 || Math.Abs(color.B - underlying.B) > 24) pass = false;
+            }
+        }
+        using (Bitmap shot = new Bitmap(48, 48))
+        {
+            using (Graphics graphics = Graphics.FromImage(shot)) graphics.CopyFromScreen(new Point(list.Left - 8, list.Top - 8), Point.Empty, shot.Size);
+            shot.Save(screenshotPath, ImageFormat.Png);
+        }
+        return pass;
     }
 
     private static List<Point> FindPoints(PetForm form, bool visible, int count)

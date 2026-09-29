@@ -15,11 +15,12 @@ namespace Roost.App
         private readonly AiEndpoint endpoint;
         private readonly AiEvalSuite suite;
         private readonly List<AiEvalCase> cases;
-        private readonly ProgressBar progress;
+        private readonly Panel progressTrack;
+        private readonly Panel progressFill;
         private readonly Label status;
         private readonly Label summary;
         private readonly TextBox details;
-        private readonly Button start;
+        private readonly RoundButton start;
         private CancellationTokenSource running;
 
         internal AiSelfTestForm(AiEndpoint endpoint, string suitePath)
@@ -28,40 +29,55 @@ namespace Roost.App
             suite = AiEvalSuite.Load(suitePath);
             cases = suite.SelfTestCases();
             Text = "模型测试题";
-            Font = new Font("Microsoft YaHei UI", 9F);
+            Font = Theme.Body;
+            BackColor = Theme.Paper;
+            ForeColor = Theme.Text;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterScreen;
             MaximizeBox = false;
             MinimizeBox = false;
-            ClientSize = new Size(560, 500);
+            ClientSize = new Size(560, 520);
 
+            Label title = new Label { Text = "模型测试题", Location = new Point(24, 20), Size = new Size(512, 28), Font = Theme.DialogTitle, BackColor = Theme.Paper };
             Label intro = new Label
             {
-                Text = string.Format("用 {0} 道测试题检验「{1}」改计划靠不靠谱。\r\n题目只使用虚构的待办，不会发送你自己的待办。会产生少量模型费用，大约需要 1 分钟。", cases.Count, endpoint.Model),
-                Location = new Point(18, 16),
-                Size = new Size(524, 44)
+                Text = string.Format("用 {0} 道测试题检验「{1}」改计划靠不靠谱。题目只使用虚构的待办，不会发送你自己的待办。会产生少量模型费用，大约需要 1 分钟。", cases.Count, endpoint.Model),
+                Location = new Point(24, 52),
+                Size = new Size(512, 40),
+                Font = Theme.Caption,
+                ForeColor = Theme.TextMuted,
+                BackColor = Theme.Paper
             };
-            progress = new ProgressBar { Location = new Point(18, 70), Size = new Size(524, 20), Maximum = cases.Count };
-            status = new Label { Location = new Point(18, 96), Size = new Size(524, 20), ForeColor = Color.DimGray };
-            summary = new Label { Location = new Point(18, 122), Size = new Size(524, 64), Font = new Font(Font, FontStyle.Bold) };
+            progressTrack = new Panel { Location = new Point(24, 104), Size = new Size(512, 6), BackColor = Theme.Line };
+            progressFill = new Panel { Location = Point.Empty, Size = new Size(0, 6), BackColor = Theme.Accent };
+            progressTrack.Controls.Add(progressFill);
+            status = new Label { Location = new Point(24, 116), Size = new Size(512, 20), ForeColor = Theme.TextMuted, BackColor = Theme.Paper, Font = Theme.Caption };
+            summary = new Label { Location = new Point(24, 142), Size = new Size(512, 64), Font = Theme.BodyBold, BackColor = Theme.Paper };
+            CardPanel detailCard = new CardPanel { Location = new Point(24, 210), Size = new Size(512, 226) };
             details = new TextBox
             {
-                Location = new Point(18, 190),
-                Size = new Size(524, 250),
+                Location = new Point(12, 10),
+                Size = new Size(488, 206),
                 Multiline = true,
                 ReadOnly = true,
                 ScrollBars = ScrollBars.Vertical,
-                BackColor = SystemColors.Window
+                BorderStyle = BorderStyle.None,
+                BackColor = Theme.Card,
+                ForeColor = Theme.Text,
+                Font = Theme.Caption
             };
-            start = new Button { Text = "开始测试", Location = new Point(356, 452), Size = new Size(90, 34) };
+            detailCard.Controls.Add(details);
+            Panel footer = new Panel { Location = new Point(0, 452), Size = new Size(560, 68), BackColor = Theme.Sidebar };
+            start = new RoundButton("开始测试", ButtonKind.Primary) { Location = new Point(332, 16), Size = new Size(104, 36) };
             start.Click += delegate
             {
                 if (running != null) running.Cancel();
                 else Start();
             };
-            Button close = new Button { Text = "关闭", Location = new Point(452, 452), Size = new Size(90, 34), DialogResult = DialogResult.Cancel };
+            RoundButton close = new RoundButton("关闭", ButtonKind.Secondary) { Location = new Point(444, 16), Size = new Size(92, 36), DialogResult = DialogResult.Cancel };
+            footer.Controls.AddRange(new Control[] { start, close });
             CancelButton = close;
-            Controls.AddRange(new Control[] { intro, progress, status, summary, details, start, close });
+            Controls.AddRange(new Control[] { title, intro, progressTrack, status, summary, detailCard, footer });
             FormClosed += delegate { if (running != null) running.Cancel(); };
             DpiScale.Apply(this);
         }
@@ -80,7 +96,7 @@ namespace Roost.App
         {
             running = new CancellationTokenSource();
             start.Text = "取消";
-            progress.Value = 0;
+            SetProgress(0);
             summary.Text = string.Empty;
             details.Text = string.Empty;
             status.Text = string.Format("正在答题：0 / {0}", cases.Count);
@@ -97,7 +113,7 @@ namespace Roost.App
                     BeginInvoke((MethodInvoker)delegate
                     {
                         if (IsDisposed) return;
-                        progress.Value = done;
+                        SetProgress(done);
                         status.Text = string.Format("正在答题：{0} / {1}", done, cases.Count);
                     });
                 }, running.Token);
@@ -126,6 +142,11 @@ namespace Roost.App
             ShowResults(results);
         }
 
+        private void SetProgress(int done)
+        {
+            progressFill.Width = cases.Count == 0 ? 0 : progressTrack.Width * done / cases.Count;
+        }
+
         private void ShowResults(List<AiEvalResult> results)
         {
             int passed = 0;
@@ -145,14 +166,14 @@ namespace Roost.App
 
             if (critical.Count == 0)
             {
-                summary.ForeColor = passed == results.Count ? Color.SeaGreen : Color.FromArgb(60, 60, 60);
+                summary.ForeColor = passed == results.Count ? Theme.Success : Theme.Text;
                 summary.Text = string.Format("答对 {0} / {1} 题，没有出现会误改计划的严重错误。", passed, results.Count);
             }
             else
             {
                 List<string> parts = new List<string>();
                 foreach (KeyValuePair<string, int> entry in critical) parts.Add(string.Format("{0}（{1} 题）", entry.Key, entry.Value));
-                summary.ForeColor = Color.Firebrick;
+                summary.ForeColor = Theme.Danger;
                 summary.Text = string.Format("答对 {0} / {1} 题。⚠ 出现严重错误：{2}。\r\n仍然可以使用——每次改动都要你确认——但请仔细核对预览，或考虑换一个模型。",
                     passed, results.Count, string.Join("、", parts.ToArray()));
             }
