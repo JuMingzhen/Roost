@@ -601,6 +601,8 @@ internal static class VerificationRunner
         {
             using (Graphics graphics = Graphics.FromImage(shot)) graphics.CopyFromScreen(menu.Location, Point.Empty, shot.Size);
             shot.Save(Path.Combine(screenshotDirectory, "menu.png"), ImageFormat.Png);
+            string balance = MenuBalanceProblem(shot);
+            if (balance != null) problems.Add("右键菜单 " + balance);
         }
         checkedForms.Add("右键菜单");
         menu.Close();
@@ -723,6 +725,36 @@ internal static class VerificationRunner
         text = text.Replace("\r", " ").Replace("\n", " ");
         if (text.Length > 12) text = text.Substring(0, 12) + "…";
         return control.GetType().Name + (text.Length > 0 ? "「" + text + "」" : string.Empty);
+    }
+
+    // 菜单里的文字整体应居中：左右留白相近、上下留白相近。文字像素按亮度判断（边框和分隔线都很浅）。
+    private static string MenuBalanceProblem(Bitmap shot)
+    {
+        int left = int.MaxValue, right = -1, top = int.MaxValue, bottom = -1;
+        int corner = (int)Math.Round(10 * DpiScaleForVerify());
+        for (int y = 0; y < shot.Height; y++)
+            for (int x = 0; x < shot.Width; x++)
+            {
+                // 圆角外露出的是下层窗口，不算文字。
+                bool nearX = x < corner || x >= shot.Width - corner, nearY = y < corner || y >= shot.Height - corner;
+                if (nearX && nearY) continue;
+                Color color = shot.GetPixel(x, y);
+                if (color.R * 0.3 + color.G * 0.59 + color.B * 0.11 >= 160) continue;
+                left = Math.Min(left, x); right = Math.Max(right, x);
+                top = Math.Min(top, y); bottom = Math.Max(bottom, y);
+            }
+        if (right < 0) return "截图里找不到文字";
+        int marginLeft = left, marginRight = shot.Width - 1 - right, marginTop = top, marginBottom = shot.Height - 1 - bottom;
+        int tolerance = (int)Math.Round(6 * DpiScaleForVerify());
+        // 右侧留白以最长的一项为准，所以只要求右边不比左边少、也不超出太多。
+        if (marginRight < marginLeft - tolerance || marginRight > marginLeft + tolerance * 3 || Math.Abs(marginTop - marginBottom) > tolerance)
+            return string.Format("文字留白不匀称：左 {0} 右 {1} 上 {2} 下 {3}", marginLeft, marginRight, marginTop, marginBottom);
+        return null;
+    }
+
+    private static float DpiScaleForVerify()
+    {
+        using (Graphics screen = Graphics.FromHwnd(IntPtr.Zero)) return screen.DpiX / 96F;
     }
 
     // 清单窗口的四个角在屏幕上应露出下层的测试窗口（系统圆角生效）。左上角截图留作证据。

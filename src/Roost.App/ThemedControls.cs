@@ -498,6 +498,9 @@ namespace Roost.App
     // 右键菜单与托盘菜单：白底、暖灰细边、选中项浅陶土色圆角底；Windows 11 上请求系统圆角。
     internal sealed class ThemedMenuRenderer : ToolStripProfessionalRenderer
     {
+        // 菜单项文字左右两侧的留白（100% 缩放下的像素）。
+        private const int MenuGutter = 16;
+
         private ThemedMenuRenderer() : base(new MenuColors())
         {
             RoundedEdges = false;
@@ -509,10 +512,17 @@ namespace Roost.App
             menu.Font = Theme.Body;
             menu.ShowImageMargin = false;
             menu.BackColor = Theme.Card;
-            menu.Padding = new Padding(DpiScale.Px(4));
-            menu.MinimumSize = new Size(DpiScale.Px(148), 0);
+            menu.Padding = new Padding(DpiScale.Px(4), DpiScale.Px(6), DpiScale.Px(4), DpiScale.Px(6));
+            // 每项固定尺寸：宽度 = 最长文字 + 左右相同的留白，高度固定，文字在 OnRenderItemText 里垂直居中。
+            int widest = 0;
             foreach (ToolStripItem item in menu.Items)
-                if (item is ToolStripMenuItem) item.Padding = new Padding(0, DpiScale.Px(5), 0, DpiScale.Px(5));
+                if (item is ToolStripMenuItem) widest = Math.Max(widest, TextRenderer.MeasureText(item.Text, Theme.Body).Width);
+            foreach (ToolStripItem item in menu.Items)
+            {
+                if (!(item is ToolStripMenuItem)) continue;
+                item.AutoSize = false;
+                item.Size = new Size(widest + 2 * DpiScale.Px(MenuGutter), DpiScale.Px(36));
+            }
             menu.HandleCreated += delegate
             {
                 int preference = NativeMethods.DWMWCP_ROUND;
@@ -535,9 +545,8 @@ namespace Roost.App
         protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
         {
             if (e.Item.Enabled && e.TextColor != Theme.Danger) e.TextColor = Theme.Text;
-            // 没有图标栏时文字贴着左边，右移一些留出呼吸感。
-            Rectangle text = e.TextRectangle;
-            e.TextRectangle = new Rectangle(text.X + DpiScale.Px(8), text.Y, text.Width, text.Height);
+            e.TextRectangle = new Rectangle(DpiScale.Px(MenuGutter), 0, Math.Max(0, e.Item.Width - 2 * DpiScale.Px(MenuGutter)), e.Item.Height);
+            e.TextFormat = TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
             base.OnRenderItemText(e);
         }
 
