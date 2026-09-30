@@ -29,6 +29,10 @@ internal static class TestRunner
         Run("04:00 边界", TestDayBoundary);
         Run("待办新建、编辑、完成、删除撤销和星标", TestTodoOperations);
         Run("编辑模式：批量删除整批撤销、批量加星标", TestBatchEdit);
+        Run("提醒时间：提前量、只有日期、不早于一天起点、无期限不提醒", TestReminderMoments);
+        Run("提醒判定：按时、补一次、错过汇总、提前 0 分钟不漏", TestReminderClassify);
+        Run("提醒状态：知道了、稍后、改时间后重新提醒、03:59 / 04:00 边界", TestReminderStates);
+        Run("旧数据文件没有提醒字段时用默认值", TestReminderSettingsDefaults);
         Run("布局翻转、找回、贴边和透明度", TestLayoutRules);
         Run("位置与清单设置重启后保持", TestSettingsPersistence);
         Run("全屏窗口判定", TestFullscreenRules);
@@ -212,6 +216,100 @@ internal static class TestRunner
         service.StarMany(new string[] { first.Id, third.Id });
         reloaded = new TodoRepository(path).Load();
         Equal(3, reloaded.Todos.FindAll(delegate(TodoItem item) { return item.IsStarred; }).Count);
+    }
+
+    private static TodoItem Due(string date, string time)
+    {
+        return new TodoItem { Title = "虚构待办", DueDate = date, DueTime = time };
+    }
+
+    private static void TestReminderMoments()
+    {
+        RoostSettings settings = new RoostSettings();
+        Equal(10, settings.ReminderLeadMinutes);
+        Equal(9 * 60, settings.DateReminderMinutes);
+        foreach (int lead in ReminderRules.LeadChoices)
+        {
+            settings.ReminderLeadMinutes = lead;
+            Equal(new DateTime(2026, 9, 30, 15, 0, 0).AddMinutes(-lead), ReminderRules.BaseMoment(Due("2026-09-30", "15:00"), settings).Value);
+        }
+        Equal(new DateTime(2026, 9, 30, 9, 0, 0), ReminderRules.BaseMoment(Due("2026-09-30", null), settings).Value);
+        settings.DateReminderMinutes = 2 * 60;
+        Equal(new DateTime(2026, 9, 30, 4, 0, 0), ReminderRules.BaseMoment(Due("2026-09-30", null), settings).Value);
+        True(ReminderRules.BaseMoment(Due(null, null), settings) == null);
+        TodoItem done = Due("2026-09-30", "15:00");
+        done.IsCompleted = true;
+        True(ReminderRules.BaseMoment(done, settings) == null);
+        TodoItem deleted = Due("2026-09-30", "15:00");
+        deleted.IsDeleted = true;
+        True(ReminderRules.BaseMoment(deleted, settings) == null);
+    }
+
+    private static void TestReminderClassify()
+    {
+        RoostSettings settings = new RoostSettings();
+        TodoItem meeting = Due("2026-09-30", "15:00");
+        DateTime moment = new DateTime(2026, 9, 30, 14, 50, 0);
+        Equal(ReminderVerdict.None, ReminderRules.Classify(meeting, settings, moment.AddSeconds(-1), moment.AddSeconds(-30)));
+        Equal(ReminderVerdict.Fire, ReminderRules.Classify(meeting, settings, moment, moment.AddSeconds(-30)));
+
+        // 新建或改时间时提醒时间已过、事情还没到点：立即提醒一次；事情也过了点：不提醒。
+        Equal(ReminderVerdict.Fire, ReminderRules.Classify(meeting, settings, new DateTime(2026, 9, 30, 14, 55, 0), new DateTime(2026, 9, 30, 14, 54, 50)));
+        Equal(ReminderVerdict.None, ReminderRules.Classify(meeting, settings, new DateTime(2026, 9, 30, 15, 5, 0), new DateTime(2026, 9, 30, 15, 4, 50)));
+
+        // 休眠从 13:00 到 15:30：事情已过点，算错过；事情还没到（16:00 的会）照常提醒。
+        DateTime slept = new DateTime(2026, 9, 30, 13, 0, 0), woke = new DateTime(2026, 9, 30, 15, 30, 0);
+        Equal(ReminderVerdict.Missed, ReminderRules.Classify(meeting, settings, woke, slept));
+        Equal(ReminderVerdict.Fire, ReminderRules.Classify(Due("2026-09-30", "15:35"), settings, woke, slept));
+        // 没有上次检查的记录（第一次运行）时不算错过。
+        Equal(ReminderVerdict.None, ReminderRules.Classify(meeting, settings, woke, null));
+
+        // 提前 0 分钟：15:00 到点，15:00:20 才检查到，事情刚过点也要提醒，不能漏。
+        settings.ReminderLeadMinutes = 0;
+        Equal(ReminderVerdict.Fire, ReminderRules.Classify(meeting, settings, new DateTime(2026, 9, 30, 15, 0, 20), new DateTime(2026, 9, 30, 14, 59, 50)));
+    }
+
+    private static void TestReminderStates()
+    {
+        RoostSettings settings = new RoostSettings();
+        TodoItem meeting = Due("2026-09-30", "15:00");
+        DateTime moment = new DateTime(2026, 9, 30, 14, 50, 0);
+        meeting.ReminderKey = ReminderRules.Key(moment);
+        meeting.ReminderDone = true;
+        Equal(ReminderVerdict.None, ReminderRules.Classify(meeting, settings, moment.AddMinutes(1), moment.AddSeconds(30)));
+
+        // 改了时间：旧的「知道了」作废，按新时间重新提醒。
+        meeting.DueTime = "16:00";
+        Equal(new DateTime(2026, 9, 30, 15, 50, 0), ReminderRules.FireMoment(meeting, settings).Value);
+
+        // 稍后提醒：到点前不提醒，到点提醒；事情已过点也照样提醒。
+        TodoItem call = Due("2026-09-30", "15:00");
+        call.ReminderKey = ReminderRules.Key(moment);
+        call.SnoozeUntil = ReminderRules.FormatSnooze(moment.AddHours(1));
+        Equal(ReminderVerdict.None, ReminderRules.Classify(call, settings, moment.AddMinutes(59), moment.AddMinutes(58)));
+        Equal(ReminderVerdict.Fire, ReminderRules.Classify(call, settings, moment.AddHours(1), moment.AddMinutes(59)));
+        Equal(ReminderVerdict.Fire, ReminderRules.Classify(call, settings, moment.AddHours(1).AddMinutes(1), moment.AddHours(1).AddSeconds(30)));
+
+        // 只有日期的待办与「过期」共用一天起点：9 月 30 日的事，10 月 1 日 03:59 还算当天，04:00 起算过期、不再提醒。
+        TodoItem report = Due("2026-09-30", null);
+        Equal(ReminderVerdict.Fire, ReminderRules.Classify(report, settings, new DateTime(2026, 10, 1, 3, 59, 0), new DateTime(2026, 10, 1, 3, 58, 30)));
+        Equal(ReminderVerdict.None, ReminderRules.Classify(report, settings, new DateTime(2026, 10, 1, 4, 0, 0), new DateTime(2026, 10, 1, 3, 59, 30)));
+    }
+
+    private static void TestReminderSettingsDefaults()
+    {
+        string root = NewTestDirectory();
+        string path = Path.Combine(root, "data.json");
+        File.WriteAllText(path, "{\"FormatVersion\":1,\"Todos\":[{\"Id\":\"a1\",\"Title\":\"虚构待办\",\"DueDate\":\"2026-09-30\"}],\"Settings\":{\"DayStartMinutes\":240}}", Encoding.UTF8);
+        RoostData data = new TodoRepository(path).Load();
+        Equal(10, data.Settings.ReminderLeadMinutes);
+        Equal(9 * 60, data.Settings.DateReminderMinutes);
+        False(data.Todos[0].ReminderDone);
+        True(data.Todos[0].ReminderKey == null);
+
+        data.Settings.ReminderLeadMinutes = 7;
+        new TodoRepository(path).Save(data);
+        Equal(10, new TodoRepository(path).Load().Settings.ReminderLeadMinutes);
     }
 
     private static void TestFullscreenRules()

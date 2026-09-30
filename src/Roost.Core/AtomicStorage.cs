@@ -147,6 +147,10 @@ namespace Roost.Core
             data.Settings.Opacity = LayoutRules.ClampOpacity(data.Settings.Opacity);
             if (data.Settings.DayStartMinutes < 0 || data.Settings.DayStartMinutes >= 24 * 60)
                 data.Settings.DayStartMinutes = 4 * 60;
+            if (Array.IndexOf(ReminderRules.LeadChoices, data.Settings.ReminderLeadMinutes) < 0)
+                data.Settings.ReminderLeadMinutes = 10;
+            if (data.Settings.DateReminderMinutes < 0 || data.Settings.DateReminderMinutes >= 24 * 60)
+                data.Settings.DateReminderMinutes = 9 * 60;
             return data;
         }
 

@@ -18,6 +18,11 @@ namespace Roost.Core
         public string UpdatedAtUtc { get; set; }
         public string CompletedAtUtc { get; set; }
         public string DeletedAtUtc { get; set; }
+        // 提醒状态（PRD 第 10 节），都针对 ReminderKey 这一个提醒时间；待办的时间改了，旧状态自动作废。
+        // ReminderKey / SnoozeUntil 是本地时间：yyyy-MM-dd HH:mm / yyyy-MM-dd HH:mm:ss。
+        public string ReminderKey { get; set; }
+        public bool ReminderDone { get; set; }
+        public string SnoozeUntil { get; set; }
 
         public TodoItem()
         {
@@ -56,6 +61,11 @@ namespace Roost.Core
         public string AiCheckModel { get; set; }
         public bool AiCheckPassed { get; set; }
         public string AiCheckUtc { get; set; }
+        // 有时刻的待办提前几分钟提醒（0 / 5 / 10 / 15 / 30）；只有日期的待办在当天几点提醒（从 0 点起的分钟数）。
+        public int ReminderLeadMinutes { get; set; }
+        public int DateReminderMinutes { get; set; }
+        // 上一次检查提醒的本地时间，用来判断程序没运行或休眠期间错过的提醒。只在退出、休眠或其他保存时顺带写入。
+        public string LastReminderCheck { get; set; }
 
         [ScriptIgnore]
         public bool AiConfigured
@@ -72,6 +82,8 @@ namespace Roost.Core
             DayStartMinutes = 4 * 60;
             ToggleHotKey = "Ctrl+Alt+H";
             TalkHotKey = "Ctrl+Alt+Space";
+            ReminderLeadMinutes = 10;
+            DateReminderMinutes = 9 * 60;
         }
     }
 
