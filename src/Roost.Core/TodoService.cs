@@ -128,6 +128,32 @@ namespace Roost.Core
             Save();
         }
 
+        // 提醒「知道了」或计入错过汇总：记为当前这个提醒时间已处理。提醒状态不算内容修改，不更新修改时间。
+        public void MarkRemindersDone(IEnumerable<string> ids)
+        {
+            foreach (string id in ids)
+            {
+                TodoItem item = Find(id);
+                DateTime? moment = ReminderRules.BaseMoment(item, Data.Settings);
+                if (!moment.HasValue) continue;
+                item.ReminderKey = ReminderRules.Key(moment.Value);
+                item.ReminderDone = true;
+                item.SnoozeUntil = null;
+            }
+            Save();
+        }
+
+        public void SnoozeReminder(string id, DateTime until)
+        {
+            TodoItem item = Find(id);
+            DateTime? moment = ReminderRules.BaseMoment(item, Data.Settings);
+            if (!moment.HasValue) return;
+            item.ReminderKey = ReminderRules.Key(moment.Value);
+            item.ReminderDone = false;
+            item.SnoozeUntil = ReminderRules.FormatSnooze(until);
+            Save();
+        }
+
         public AiUndo ApplyAi(IEnumerable<AiOperation> operations)
         {
             AiUndo undo = new AiUndo();

@@ -33,6 +33,8 @@ internal static class TestRunner
         Run("提醒判定：按时、补一次、错过汇总、提前 0 分钟不漏", TestReminderClassify);
         Run("提醒状态：知道了、稍后、改时间后重新提醒、03:59 / 04:00 边界", TestReminderStates);
         Run("旧数据文件没有提醒字段时用默认值", TestReminderSettingsDefaults);
+        Run("提醒服务：合并冒泡、完成、稍后、知道了、重启不重复", TestReminderService);
+        Run("提醒服务：休眠错过汇总、改时间或完成后移出提醒泡", TestReminderServiceMissedAndPrune);
         Run("布局翻转、找回、贴边和透明度", TestLayoutRules);
         Run("位置与清单设置重启后保持", TestSettingsPersistence);
         Run("全屏窗口判定", TestFullscreenRules);
@@ -310,6 +312,83 @@ internal static class TestRunner
         data.Settings.ReminderLeadMinutes = 7;
         new TodoRepository(path).Save(data);
         Equal(10, new TodoRepository(path).Load().Settings.ReminderLeadMinutes);
+    }
+
+    private static void TestReminderService()
+    {
+        string root = NewTestDirectory();
+        string path = Path.Combine(root, "data.json");
+        TodoService service = new TodoService(new TodoRepository(path));
+        TodoItem a = service.Create("虚构待办：复盘会", null, "2026-09-30", "15:00", false);
+        TodoItem b = service.Create("虚构待办：交电费", null, "2026-09-30", "15:00", false);
+        TodoItem c = service.Create("虚构待办：打电话", null, "2026-09-30", "15:00", false);
+        service.Create("虚构待办：取快递", null, "2026-09-30", "18:00", false);
+        ReminderService reminders = new ReminderService(service);
+        DateTime start = new DateTime(2026, 9, 30, 14, 0, 0);
+        Equal(0, reminders.Tick(start).Fired.Count);
+        Equal(new DateTime(2026, 9, 30, 14, 50, 0), reminders.NextFire(start).Value);
+
+        // 三条同时到点：一次冒出三条（界面合并显示），再检查不会重复冒。
+        DateTime moment = new DateTime(2026, 9, 30, 14, 50, 0);
+        Equal(3, reminders.Tick(moment).Fired.Count);
+        Equal(0, reminders.Tick(moment.AddSeconds(30)).Fired.Count);
+        Equal(3, reminders.Active.Count);
+        Equal(new DateTime(2026, 9, 30, 17, 50, 0), reminders.NextFire(moment).Value);
+
+        reminders.Complete(a.Id);
+        True(service.Find(a.Id).IsCompleted);
+        reminders.Snooze(b.Id, TimeSpan.FromMinutes(10), moment.AddMinutes(1));
+        reminders.Dismiss(c.Id);
+        Equal(0, reminders.Active.Count);
+        Equal(0, reminders.Tick(moment.AddMinutes(10)).Fired.Count);
+        List<TodoItem> snoozed = reminders.Tick(moment.AddMinutes(11)).Fired;
+        Equal(1, snoozed.Count);
+        Equal(b.Id, snoozed[0].Id);
+
+        // 重启（重新读文件）：已处理的不再提醒，稍后提醒的状态还在。
+        service.SaveSettings();
+        TodoService reloaded = new TodoService(new TodoRepository(path));
+        ReminderService again = new ReminderService(reloaded);
+        List<TodoItem> fired = again.Tick(moment.AddMinutes(12)).Fired;
+        Equal(1, fired.Count);
+        Equal(b.Id, fired[0].Id);
+        again.Dismiss(b.Id);
+        Equal(0, new ReminderService(new TodoService(new TodoRepository(path))).Tick(moment.AddMinutes(13)).Fired.Count);
+    }
+
+    private static void TestReminderServiceMissedAndPrune()
+    {
+        string root = NewTestDirectory();
+        string path = Path.Combine(root, "data.json");
+        TodoService service = new TodoService(new TodoRepository(path));
+        TodoItem passed = service.Create("虚构待办：午饭", null, "2026-09-30", "12:00", false);
+        TodoItem upcoming = service.Create("虚构待办：开会", null, "2026-09-30", "15:40", false);
+        ReminderService reminders = new ReminderService(service);
+        reminders.Tick(new DateTime(2026, 9, 30, 11, 0, 0));
+        service.SaveSettings();
+
+        // 11:00 之后休眠，15:35 唤醒：12:00 的事记入错过汇总，15:40 的会照常提醒（提醒时间 15:30）。
+        ReminderService woke = new ReminderService(new TodoService(new TodoRepository(path)));
+        ReminderTick tick = woke.Tick(new DateTime(2026, 9, 30, 15, 35, 0));
+        Equal(1, tick.MissedCount);
+        Equal(1, tick.Fired.Count);
+        Equal(upcoming.Id, tick.Fired[0].Id);
+        TodoService reloaded = new TodoService(new TodoRepository(path));
+        True(reloaded.Find(passed.Id).ReminderDone);
+        Equal(0, new ReminderService(reloaded).Tick(new DateTime(2026, 9, 30, 15, 36, 0)).MissedCount);
+
+        // 正在提醒的待办被改到更晚、或在清单里点了完成：移出提醒泡。
+        TodoService live = new TodoService(new TodoRepository(path));
+        TodoItem call = live.Create("虚构待办：回电话", null, "2026-09-30", "16:00", false);
+        TodoItem gym = live.Create("虚构待办：健身", null, "2026-09-30", "16:00", false);
+        ReminderService current = new ReminderService(live);
+        DateTime now = new DateTime(2026, 9, 30, 15, 50, 0);
+        current.Tick(now.AddSeconds(-30));
+        Equal(2, current.Tick(now).Fired.Count);
+        live.Update(call.Id, call.Title, null, "2026-09-30", "18:00", false);
+        live.ToggleCompleted(gym.Id);
+        current.Prune(now.AddSeconds(10));
+        Equal(0, current.Active.Count);
     }
 
     private static void TestFullscreenRules()
