@@ -764,6 +764,18 @@ internal static class VerificationRunner
         Check(result, problems, "missedDismissed", pet.ReminderModeForTest == "none" && !pet.ReminderWindowForTest.Visible);
         pet.CloseForTest();
 
+        // 设置「提醒」页：提前量和只有日期的提醒时刻能保存；时刻选项不早于一天起点，改了一天起点跟着变。
+        RoostSettings reminderSettings = new RoostSettings();
+        SettingsForm settingsForm = new SettingsForm(reminderSettings);
+        bool choicesAfterDayStart = settingsForm.DateReminderChoicesForTest[0] == 4 * 60 && settingsForm.DateReminderChoicesForTest.Contains(9 * 60);
+        settingsForm.SetDayStartForTest(10 * 60);
+        bool choicesFollowDayStart = settingsForm.DateReminderChoicesForTest[0] == 10 * 60 && !settingsForm.DateReminderChoicesForTest.Contains(9 * 60);
+        settingsForm.SetReminderForTest(1, 11 * 60);
+        settingsForm.SaveForTest();
+        Check(result, problems, "reminderSettingsSaved", choicesAfterDayStart && choicesFollowDayStart && reminderSettings.ReminderLeadMinutes == 5 &&
+              reminderSettings.DateReminderMinutes == 11 * 60 && reminderSettings.DayStartMinutes == 10 * 60);
+        settingsForm.Dispose();
+
         foreach (string problem in problems) Console.Error.WriteLine(problem);
         bool pass = problems.Count == 0;
         result["actualScalePercent"] = scale;

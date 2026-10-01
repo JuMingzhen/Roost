@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -22,6 +23,10 @@ namespace Roost.App
         private readonly Slider opacityBar;
         private readonly Label opacityValue;
         private readonly DateTimePicker dayStart;
+        private readonly SegmentedControl leadBox;
+        private readonly ComboBox dateReminderBox;
+        private readonly Label dateReminderHint;
+        private readonly List<int> dateReminderChoices = new List<int>();
         private readonly RoostSettings settings;
         private readonly Panel[] pages;
         private readonly RoundButton[] navButtons;
@@ -62,9 +67,9 @@ namespace Roost.App
             MaximizeBox = false;
             ClientSize = new Size(NavWidth + PageWidth, PageHeight);
 
-            string[] names = new string[] { "外观", "快捷键", "AI 模型", "通用", "关于" };
-            string[] glyphs = new string[] { Theme.Icons.Appearance, Theme.Icons.Keyboard, Theme.Icons.Sparkle, Theme.Icons.General, Theme.Icons.Info };
-            aiPageIndex = 2;
+            string[] names = new string[] { "外观", "提醒", "快捷键", "AI 模型", "通用", "关于" };
+            string[] glyphs = new string[] { Theme.Icons.Appearance, Theme.Icons.Bell, Theme.Icons.Keyboard, Theme.Icons.Sparkle, Theme.Icons.General, Theme.Icons.Info };
+            aiPageIndex = 3;
             Panel nav = new Panel { Bounds = new Rectangle(0, 0, NavWidth, PageHeight), BackColor = Theme.Sidebar };
             pages = new Panel[names.Length];
             navButtons = new RoundButton[names.Length];
@@ -95,8 +100,27 @@ namespace Roost.App
             appearanceCard.Controls.Add(opacityValue);
             SaveButton(appearance);
 
+            // 提醒（PRD 10.1、12）
+            Panel reminderPage = pages[1];
+            y = PageHeader(reminderPage, "提醒", "到点时宠物会冒泡提醒，不弹系统通知。无期限的待办不提醒。");
+            CardPanel reminderCard = Card(reminderPage, y, 104 + 1 + 64);
+            Row(reminderCard, 0, "有具体时刻的待办", "提前多久提醒");
+            leadBox = new SegmentedControl("准时", "5 分钟", "10 分钟", "15 分钟", "30 分钟") { Location = new Point(16, 62), Size = new Size(CardWidth - 32, 30) };
+            leadBox.SelectedIndex = Math.Max(0, Array.IndexOf(ReminderRules.LeadChoices, settings.ReminderLeadMinutes));
+            reminderCard.Controls.Add(leadBox);
+            Divider(reminderCard, 104);
+            reminderCard.Controls.Add(new Label { Text = "只有日期的待办", Location = new Point(16, 105 + 12), Size = new Size(240, 22), Font = Theme.BodyBold, BackColor = Theme.Card, ForeColor = Theme.Text });
+            dateReminderHint = new Label { Location = new Point(16, 105 + 34), Size = new Size(300, 20), Font = Theme.Caption, BackColor = Theme.Card, ForeColor = Theme.TextMuted };
+            reminderCard.Controls.Add(dateReminderHint);
+            dateReminderBox = new ComboBox { Location = new Point(CardWidth - 16 - 100, 105 + 18), Width = 100, DropDownStyle = ComboBoxStyle.DropDownList, ForeColor = Theme.Text, AccessibleName = "只有日期的待办几点提醒" };
+            reminderCard.Controls.Add(dateReminderBox);
+            CardPanel reminderNote = new CardPanel { Location = new Point(PageMargin, reminderCard.Bottom + 12), Size = new Size(CardWidth, 58), BackColor = Theme.Sidebar, BorderColor = Theme.Sidebar };
+            reminderNote.Controls.Add(new Label { Text = "宠物被手动隐藏时，到点不会把它叫出来，托盘图标会换成提醒状态；全屏时宠物自动隐藏，退出全屏后提醒泡还在。", Location = new Point(14, 9), Size = new Size(CardWidth - 28, 40), Font = Theme.Caption, ForeColor = Theme.TextMuted, BackColor = Theme.Sidebar });
+            reminderPage.Controls.Add(reminderNote);
+            SaveButton(reminderPage);
+
             // 快捷键
-            Panel shortcuts = pages[1];
+            Panel shortcuts = pages[2];
             y = PageHeader(shortcuts, "快捷键", "修改快捷键和冲突提示将在后续版本提供。");
             CardPanel keysCard = Card(shortcuts, y, 2 * 56 + 1);
             Row(keysCard, 0, "一键隐藏 / 显示", null, 56);
@@ -167,12 +191,15 @@ namespace Roost.App
             aiPage.Controls.Add(aiStatus);
 
             // 通用
-            Panel general = pages[3];
+            Panel general = pages[4];
             y = PageHeader(general, "通用", "「今天」从几点算起，以及开机自启。");
             CardPanel generalCard = Card(general, y, 64 + 1 + 64);
             Row(generalCard, 0, "一天起点", "这个时间之前算作前一天，默认 04:00");
             dayStart = new DateTimePicker { Location = new Point(CardWidth - 16 - 100, 18), Width = 100, Format = DateTimePickerFormat.Custom, CustomFormat = "HH:mm", ShowUpDown = true, Value = DateTime.Today.AddMinutes(settings.DayStartMinutes) };
             generalCard.Controls.Add(dayStart);
+            // 只有日期的待办，提醒时刻只能选一天起点之后（用户 2026-09-30 决定）；改了一天起点，选项跟着变。
+            FillDateReminderChoices(settings.DateReminderMinutes);
+            dayStart.ValueChanged += delegate { FillDateReminderChoices(SelectedDateReminder()); };
             Divider(generalCard, 64);
             Row(generalCard, 65, "开机自启", "将在 M4 提供");
             ToggleSwitch startup = new ToggleSwitch(string.Empty) { Location = new Point(CardWidth - 16 - 40, 65 + 20), Size = new Size(40, 24), Enabled = false, AccessibleName = "开机自启" };
@@ -180,7 +207,7 @@ namespace Roost.App
             SaveButton(general);
 
             // 关于
-            Panel about = pages[4];
+            Panel about = pages[5];
             y = PageHeader(about, "关于", "一只住在桌面上的像素小猫，帮你记着今天要做的事。");
             CardPanel aboutCard = Card(about, y, 150);
             aboutCard.Controls.Add(new Label { Text = "Roost v1 开发版", Location = new Point(16, 16), Size = new Size(CardWidth - 32, 22), Font = Theme.BodyBold, BackColor = Theme.Card });
@@ -532,11 +559,57 @@ namespace Roost.App
             aiStatus.ForeColor = color;
         }
 
+        internal List<int> DateReminderChoicesForTest { get { return new List<int>(dateReminderChoices); } }
+
+        internal void SetReminderForTest(int leadIndex, int dateMinutes)
+        {
+            leadBox.SelectedIndex = leadIndex;
+            dateReminderBox.SelectedIndex = dateReminderChoices.IndexOf(dateMinutes);
+        }
+
+        internal void SetDayStartForTest(int minutes)
+        {
+            dayStart.Value = DateTime.Today.AddMinutes(minutes);
+        }
+
+        internal void SaveForTest()
+        {
+            SaveSettings();
+        }
+
+        private int DayStartMinutes()
+        {
+            return dayStart.Value.Hour * 60 + dayStart.Value.Minute;
+        }
+
+        // 每半小时一档，从一天起点（向上取到半点）到 23:30；当前值不在档位上时也列出来。
+        private void FillDateReminderChoices(int selected)
+        {
+            int start = DayStartMinutes();
+            dateReminderChoices.Clear();
+            for (int minutes = (start + 29) / 30 * 30; minutes < 24 * 60; minutes += 30) dateReminderChoices.Add(minutes);
+            int wanted = Math.Max(selected, start);
+            if (!dateReminderChoices.Contains(wanted) && wanted < 24 * 60) dateReminderChoices.Add(wanted);
+            dateReminderChoices.Sort();
+            dateReminderBox.Items.Clear();
+            foreach (int minutes in dateReminderChoices) dateReminderBox.Items.Add(DateTime.Today.AddMinutes(minutes).ToString("HH:mm"));
+            dateReminderBox.SelectedIndex = Math.Max(0, dateReminderChoices.IndexOf(wanted));
+            dateReminderHint.Text = string.Format("当天几点提醒，不早于一天起点（{0}）", DateTime.Today.AddMinutes(start).ToString("HH:mm"));
+        }
+
+        private int SelectedDateReminder()
+        {
+            int index = dateReminderBox.SelectedIndex;
+            return index >= 0 && index < dateReminderChoices.Count ? dateReminderChoices[index] : settings.DateReminderMinutes;
+        }
+
         private void SaveSettings()
         {
             settings.SizeTier = sizeBox.SelectedIndex + 1;
             settings.Opacity = opacityBar.Value / 100.0;
-            settings.DayStartMinutes = dayStart.Value.Hour * 60 + dayStart.Value.Minute;
+            settings.DayStartMinutes = DayStartMinutes();
+            settings.ReminderLeadMinutes = ReminderRules.LeadChoices[Math.Max(0, leadBox.SelectedIndex)];
+            settings.DateReminderMinutes = Math.Max(SelectedDateReminder(), settings.DayStartMinutes);
             EventHandler handler = SettingsSaved;
             if (handler != null) handler(this, EventArgs.Empty);
             Close();
