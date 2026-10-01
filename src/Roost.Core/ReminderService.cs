@@ -111,6 +111,15 @@ namespace Roost.Core
             todos.MarkRemindersDone(new string[] { id });
         }
 
+        // 合并泡里的「全部知道了」：一次处理完，只保存一次。
+        public void DismissAll()
+        {
+            if (active.Count == 0) return;
+            List<string> ids = new List<string>(active);
+            active.Clear();
+            todos.MarkRemindersDone(ids);
+        }
+
         // 已完成、已删除、或改了时间还没到点的，不再留在提醒泡里。
         public void Prune(DateTime now)
         {

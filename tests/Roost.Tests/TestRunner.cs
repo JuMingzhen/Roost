@@ -33,7 +33,7 @@ internal static class TestRunner
         Run("提醒判定：按时、补一次、错过汇总、提前 0 分钟不漏", TestReminderClassify);
         Run("提醒状态：知道了、改提前量不复活、稍后、改时间后重新提醒、03:59 / 04:00 边界", TestReminderStates);
         Run("旧数据文件没有提醒字段时用默认值", TestReminderSettingsDefaults);
-        Run("提醒服务：合并冒泡、完成、稍后、知道了、重启不重复", TestReminderService);
+        Run("提醒服务：合并冒泡、完成、稍后、知道了、全部知道了、重启不重复", TestReminderService);
         Run("提醒服务：休眠错过汇总、改时间或完成后移出提醒泡", TestReminderServiceMissedAndPrune);
         Run("布局翻转、找回、贴边和透明度", TestLayoutRules);
         Run("位置与清单设置重启后保持", TestSettingsPersistence);
@@ -359,6 +359,15 @@ internal static class TestRunner
         Equal(b.Id, fired[0].Id);
         again.Dismiss(b.Id);
         Equal(0, new ReminderService(new TodoService(new TodoRepository(path))).Tick(moment.AddMinutes(13)).Fired.Count);
+
+        // 「全部知道了」：三条一起处理，重启后也不再提醒。
+        TodoService batch = new TodoService(new TodoRepository(path));
+        for (int i = 0; i < 3; i++) batch.Create("虚构待办：同时到点 " + i, null, "2026-09-30", "16:00", false);
+        ReminderService all = new ReminderService(batch);
+        Equal(3, all.Tick(new DateTime(2026, 9, 30, 15, 50, 0)).Fired.Count);
+        all.DismissAll();
+        Equal(0, all.Active.Count);
+        Equal(0, new ReminderService(new TodoService(new TodoRepository(path))).Tick(new DateTime(2026, 9, 30, 15, 51, 0)).Fired.Count);
     }
 
     private static void TestReminderServiceMissedAndPrune()

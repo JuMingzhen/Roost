@@ -46,7 +46,7 @@ internal static class VerificationRunner
         Application.SetCompatibleTextRenderingDefault(false);
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("Usage: Roost.Verify.exe <system|pixel|cpu|ai|layout> ...");
+            Console.Error.WriteLine("Usage: Roost.Verify.exe <system|pixel|cpu|ai|layout|reminder> ...");
             return 64;
         }
         try
@@ -56,6 +56,7 @@ internal static class VerificationRunner
             if (args[0] == "cpu") return RunCpu(args[1], int.Parse(args[2]), int.Parse(args[3]));
             if (args[0] == "ai") return RunAi(args[1]);
             if (args[0] == "layout") return RunLayout(args[1], args[2]);
+            if (args[0] == "reminder") return RunReminder(args[1], args[2]);
             return 64;
         }
         catch (Exception exception)
@@ -648,6 +649,143 @@ internal static class VerificationRunner
         result["status"] = pass ? "PASS" : "FAIL";
         WriteJson(outputPath, result);
         return pass ? 0 : 1;
+    }
+
+    // M3 提醒：真实宠物窗口 + 虚构时钟，走一遍到点、合并、完成 / 稍后 / 知道了、隐藏时托盘提示、全屏、错过汇总（PRD 第 10 节）。
+    private static int RunReminder(string outputPath, string screenshotDirectory)
+    {
+        Directory.CreateDirectory(screenshotDirectory);
+        List<string> problems = new List<string>();
+        Dictionary<string, object> result = Base("reminder");
+        string root = NewTestDirectory();
+        TodoService service = new TodoService(new TodoRepository(Path.Combine(root, "data.json")));
+        // 用明天的虚构待办，构造宠物窗口时按真实时间检查一次也不会提前触发。
+        DateTime day = DateTime.Today.AddDays(1);
+        string date = day.ToString("yyyy-MM-dd");
+        TodoItem review = service.Create("虚构待办：项目复盘会", null, date, "15:00", true);
+        TodoItem bill = service.Create("虚构待办：交电费", null, date, "15:00", false);
+        TodoItem call = service.Create("虚构待办：回电话", null, date, "15:00", false);
+        TodoItem parcel = service.Create("虚构待办：取快递", null, date, "17:00", false);
+        service.Data.Settings.FirstRunCompleted = true;
+        service.Data.Settings.ListVisible = true;
+        service.SaveSettings();
+        DateTime now = day.AddHours(14);
+        PetForm pet = new PetForm(service, NativeMethods.RegisterWindowMessage("Roost.Verify.Reminder." + Guid.NewGuid().ToString("N")), Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "cat"));
+        pet.SetClockForTest(delegate { return now; });
+        pet.Show();
+        pet.DisableFullscreenDetectionForTest();
+        Pump(300);
+        int scale = GetScalePercent(pet);
+
+        pet.TickRemindersForTest();
+        Pump(50);
+        Check(result, problems, "quietBeforeDue", pet.ReminderCountForTest == 0 && !pet.ReminderWindowForTest.Visible && pet.PetStateForTest != PetState.Reminder);
+
+        // 14:50 三条同时到点：合并泡、提醒动画，泡不压住宠物。
+        now = day.AddHours(14).AddMinutes(50);
+        pet.TickRemindersForTest();
+        Pump(100);
+        Check(result, problems, "threeDueMerged", pet.ReminderCountForTest == 3 && pet.ReminderModeForTest == "collapsed" && pet.ReminderHeadlineForTest == "有 3 件事到点了" && pet.ReminderWindowForTest.Visible);
+        Check(result, problems, "reminderAnimation", pet.PetStateForTest == PetState.Reminder);
+        Rectangle petScreen = new Rectangle(pet.Left + pet.SpriteBoundsForTest.X, pet.Top + pet.SpriteBoundsForTest.Y, pet.SpriteBoundsForTest.Width, pet.SpriteBoundsForTest.Height);
+        Check(result, problems, "bubbleClearOfPet", !pet.ReminderWindowForTest.Bounds.IntersectsWith(petScreen));
+        CheckReminderLayout(pet, "提醒泡（合并收起）", Path.Combine(screenshotDirectory, "reminder-collapsed.png"), problems);
+
+        pet.ExpandRemindersForTest();
+        Pump(150);
+        Check(result, problems, "expandedRows", pet.ReminderModeForTest == "expanded");
+        CheckReminderLayout(pet, "提醒泡（展开）", Path.Combine(screenshotDirectory, "reminder-expanded.png"), problems);
+
+        // 临时气泡（如 AI 提示）和提醒泡同时出现，互不覆盖。
+        pet.ShowBubbleForTest("虚构提示：这是一条临时气泡。", null);
+        Pump(100);
+        Check(result, problems, "coexistsWithMessageBubble", pet.BubbleForTest.Visible && pet.ReminderWindowForTest.Visible &&
+              !pet.BubbleForTest.FindForm().Bounds.IntersectsWith(pet.ReminderWindowForTest.Bounds));
+        ((BubbleView)pet.BubbleForTest).Dismiss();
+        Pump(50);
+
+        // 完成 / 稍后 10 分钟 / 知道了。
+        pet.CompleteReminderForTest(review.Id);
+        pet.SnoozeReminderForTest(bill.Id, 10);
+        Pump(100);
+        Check(result, problems, "singleAfterTwoHandled", pet.ReminderCountForTest == 1 && pet.ReminderModeForTest == "single" && pet.ReminderHeadlineForTest == call.Title);
+        CheckReminderLayout(pet, "提醒泡（单条）", Path.Combine(screenshotDirectory, "reminder-single.png"), problems);
+        pet.DismissReminderForTest(call.Id);
+        Pump(100);
+        Check(result, problems, "actionsUpdateData", service.Find(review.Id).IsCompleted && !string.IsNullOrEmpty(service.Find(bill.Id).SnoozeUntil) &&
+              service.Find(call.Id).ReminderDone && pet.ReminderCountForTest == 0 && !pet.ReminderWindowForTest.Visible && pet.PetStateForTest != PetState.Reminder);
+
+        // 14:50 点了「稍后 10 分钟」：14:59 不提醒，15:00 提醒。
+        now = day.AddHours(14).AddMinutes(59);
+        pet.TickRemindersForTest();
+        Check(result, problems, "snoozeNotEarly", pet.ReminderCountForTest == 0);
+        now = day.AddHours(15);
+        pet.TickRemindersForTest();
+        Pump(50);
+        Check(result, problems, "snoozeFires", pet.ReminderCountForTest == 1 && pet.ReminderHeadlineForTest == bill.Title);
+
+        // 手动隐藏：不叫出宠物，托盘图标换成提醒猫并提示条数；再显示时提醒泡还在。
+        pet.ToggleVisibilityForTest();
+        Pump(100);
+        Check(result, problems, "hiddenTrayAlert", !pet.Visible && !pet.ReminderWindowForTest.Visible && pet.TrayAlertForTest && pet.TrayTextForTest.Contains("有 1 件事到点了"));
+        pet.ToggleVisibilityForTest();
+        Pump(100);
+        Check(result, problems, "shownBubbleStillThere", pet.Visible && pet.ReminderWindowForTest.Visible && !pet.TrayAlertForTest && pet.ReminderCountForTest == 1);
+
+        // 全屏：宠物和提醒泡一起隐藏，退出全屏后提醒泡还在。
+        pet.EvaluateFullscreenForTest(true);
+        Pump(50);
+        bool hiddenInFullscreen = !pet.Visible && !pet.ReminderWindowForTest.Visible;
+        pet.EvaluateFullscreenForTest(false);
+        Pump(100);
+        Check(result, problems, "fullscreenKeepsBubble", hiddenInFullscreen && pet.ReminderWindowForTest.Visible && pet.ReminderCountForTest == 1);
+
+        // 「全部知道了」。
+        TodoItem gym = service.Create("虚构待办：健身", null, date, "15:30", false);
+        TodoItem mail = service.Create("虚构待办：回邮件", null, date, "15:30", false);
+        now = day.AddHours(15).AddMinutes(20);
+        pet.TickRemindersForTest();
+        Pump(50);
+        int beforeAll = pet.ReminderCountForTest;
+        pet.DismissAllRemindersForTest();
+        Pump(100);
+        Check(result, problems, "dismissAll", beforeAll == 3 && pet.ReminderCountForTest == 0 && service.Find(bill.Id).ReminderDone &&
+              service.Find(gym.Id).ReminderDone && service.Find(mail.Id).ReminderDone);
+
+        // 休眠到 18:30：17:00 的取快递已经过点，只冒一个汇总泡，不逐条补弹。
+        now = day.AddHours(18).AddMinutes(30);
+        pet.TickRemindersForTest();
+        Pump(100);
+        Check(result, problems, "missedSummary", pet.ReminderModeForTest == "missed" && pet.ReminderHeadlineForTest == "你不在的时候有 1 件事到点了" &&
+              pet.ReminderCountForTest == 0 && service.Find(parcel.Id).ReminderDone && pet.PetStateForTest != PetState.Reminder);
+        CheckReminderLayout(pet, "提醒泡（错过汇总）", Path.Combine(screenshotDirectory, "reminder-missed.png"), problems);
+        pet.DismissMissedForTest();
+        Pump(50);
+        Check(result, problems, "missedDismissed", pet.ReminderModeForTest == "none" && !pet.ReminderWindowForTest.Visible);
+        pet.CloseForTest();
+
+        foreach (string problem in problems) Console.Error.WriteLine(problem);
+        bool pass = problems.Count == 0;
+        result["actualScalePercent"] = scale;
+        result["problems"] = problems.ToArray();
+        result["overallPass"] = pass;
+        result["status"] = pass ? "PASS" : "FAIL";
+        WriteJson(outputPath, result);
+        return pass ? 0 : 1;
+    }
+
+    private static void Check(Dictionary<string, object> result, List<string> problems, string name, bool pass)
+    {
+        result[name] = pass;
+        if (!pass) problems.Add(name + " 未通过");
+    }
+
+    // 提醒泡排版检查：窗口确实显示（否则子控件都算不可见），再查文字、重叠、越界，并截图。
+    private static void CheckReminderLayout(PetForm pet, string name, string screenshotPath, List<string> problems)
+    {
+        if (!pet.ReminderWindowForTest.Visible) problems.Add(name + " 窗口没有显示");
+        CheckLayout(pet.ReminderViewForTest, name, problems);
+        Capture(pet.ReminderViewForTest, screenshotPath);
     }
 
     private static void CheckForm(Form form, string name, string screenshotDirectory, List<string> problems, List<string> checkedForms)

@@ -40,6 +40,15 @@ namespace Roost.App
         private readonly NotifyIcon tray;
         private readonly RoundButton settingsButton;
         private readonly IntPtr trayIconHandle;
+        private readonly IntPtr reminderTrayIconHandle;
+        private readonly ReminderService reminders;
+        private readonly ReminderView reminderView;
+        private readonly FloatingWindow reminderWindow;
+        private readonly Timer reminderTimer;
+        private Size reminderSize;
+        // 错过提醒的条数，显示在汇总泡里，点「知道了」清零。
+        private int missedCount;
+        private Func<DateTime> clock = delegate { return DateTime.Now; };
         private readonly ToolStripMenuItem showHideItem;
         private readonly Timer fullscreenTimer;
         private readonly Timer undoTimer;
@@ -97,6 +106,40 @@ namespace Roost.App
         internal string BubbleMessageForTest { get { return bubble.MessageForTest; } }
         internal Control BubbleForTest { get { return bubble; } }
         internal ContextMenuStrip MenuForTest { get { return sprite.ContextMenuStrip; } }
+        internal Control ReminderViewForTest { get { return reminderView; } }
+        internal Form ReminderWindowForTest { get { return reminderWindow; } }
+        internal string ReminderModeForTest { get { return reminderView.ModeForTest; } }
+        internal string ReminderHeadlineForTest { get { return reminderView.HeadlineForTest; } }
+        internal int ReminderCountForTest { get { return reminders.Active.Count; } }
+        internal string TrayTextForTest { get { return tray.Text; } }
+        internal bool TrayAlertForTest { get { return reminderTrayIconHandle != IntPtr.Zero && tray.Icon != null && tray.Icon.Handle == reminderTrayIconHandle; } }
+
+        // 测试用虚构时钟推进时间。
+        internal void SetClockForTest(Func<DateTime> value)
+        {
+            clock = value;
+        }
+
+        internal void TickRemindersForTest()
+        {
+            TickReminders();
+        }
+
+        internal void ExpandRemindersForTest()
+        {
+            reminderView.ExpandForTest();
+        }
+
+        internal string ReminderIdForTest(int index)
+        {
+            return reminders.Active[index].Id;
+        }
+
+        internal void CompleteReminderForTest(string id) { CompleteReminder(id); }
+        internal void SnoozeReminderForTest(string id, int minutes) { SnoozeReminder(id, minutes); }
+        internal void DismissReminderForTest(string id) { DismissReminder(id); }
+        internal void DismissAllRemindersForTest() { DismissAllReminders(); }
+        internal void DismissMissedForTest() { missedCount = 0; UpdateReminderView(); }
 
         internal void ShowBubbleForTest(string message, string actionText)
         {
@@ -156,6 +199,7 @@ namespace Roost.App
             Point screen = new Point(Left + clientPoint.X, Top + clientPoint.Y);
             if (listWindow.Visible && listWindow.Bounds.Contains(screen)) return true;
             if (bubbleWindow.Visible && bubbleWindow.Bounds.Contains(screen)) return true;
+            if (reminderWindow.Visible && reminderWindow.Bounds.Contains(screen)) return true;
             return Region != null && Region.IsVisible(clientPoint);
         }
 
@@ -269,6 +313,17 @@ namespace Roost.App
             bubble = new BubbleView { Font = Font };
             bubble.Dismissed += delegate { bubbleTimer.Stop(); bubbleSize = Size.Empty; ApplyLayout(); };
             bubbleWindow = new FloatingWindow(bubble, NativeMethods.DWMWCP_ROUND) { Owner = this };
+            reminders = new ReminderService(todos);
+            reminderView = new ReminderView();
+            reminderView.CompleteRequested += delegate(string id) { CompleteReminder(id); };
+            reminderView.SnoozeRequested += delegate(string id, int minutes) { SnoozeReminder(id, minutes); };
+            reminderView.DismissRequested += delegate(string id) { DismissReminder(id); };
+            reminderView.DismissAllRequested += delegate { DismissAllReminders(); };
+            reminderView.MissedDismissed += delegate { missedCount = 0; UpdateReminderView(); };
+            reminderView.SizeChangedByUser += delegate { UpdateReminderView(); };
+            reminderWindow = new FloatingWindow(reminderView, NativeMethods.DWMWCP_ROUND) { Owner = this };
+            reminderTimer = new Timer { Interval = 60000 };
+            reminderTimer.Tick += delegate { TickReminders(); };
             listWindow = new FloatingWindow(listPanel, NativeMethods.DWMWCP_ROUND) { Owner = this, KeyPreview = true };
             listWindow.KeyDown += delegate(object sender, KeyEventArgs e)
             {
@@ -286,7 +341,8 @@ namespace Roost.App
             menu.Items.AddRange(new ToolStripItem[] { showHideItem, settingsItem, new ToolStripSeparator(), exitItem });
             ThemedMenuRenderer.Apply(menu);
             sprite.ContextMenuStrip = menu;
-            trayIconHandle = CreateTrayIconHandle(assetRoot);
+            trayIconHandle = CreateTrayIconHandle(assetRoot, "idle.png");
+            reminderTrayIconHandle = CreateTrayIconHandle(assetRoot, "notification.png");
             tray = new NotifyIcon
             {
                 Text = "Roost（右键打开菜单）",
@@ -324,6 +380,8 @@ namespace Roost.App
             ApplyOpacity();
             fullscreenTimer.Start();
             SystemEvents.SessionSwitch += SessionSwitch;
+            SystemEvents.PowerModeChanged += PowerModeChanged;
+            SystemEvents.TimeChanged += TimeChanged;
         }
 
         protected override void OnShown(EventArgs e)
@@ -375,11 +433,18 @@ namespace Roost.App
                 return;
             }
             fullscreenTimer.Stop();
+            reminderTimer.Stop();
+            // 记下最后一次检查提醒的时间，下次启动时据此判断错过的提醒（PRD 10.4）。
+            todos.SaveSettings();
             listWindow.Close();
             bubbleWindow.Close();
+            reminderWindow.Close();
             tray.Visible = false;
             if (trayIconHandle != IntPtr.Zero) NativeMethods.DestroyIcon(trayIconHandle);
+            if (reminderTrayIconHandle != IntPtr.Zero) NativeMethods.DestroyIcon(reminderTrayIconHandle);
             SystemEvents.SessionSwitch -= SessionSwitch;
+            SystemEvents.PowerModeChanged -= PowerModeChanged;
+            SystemEvents.TimeChanged -= TimeChanged;
             base.OnFormClosing(e);
         }
 
@@ -409,10 +474,10 @@ namespace Roost.App
             base.WndProc(ref message);
         }
 
-        // 托盘图标用猫的待机帧，缩到托盘尺寸（最近邻，保持像素风）。
-        private static IntPtr CreateTrayIconHandle(string assetRoot)
+        // 托盘图标用猫的待机帧（有提醒时用提醒帧），缩到托盘尺寸（最近邻，保持像素风）。
+        private static IntPtr CreateTrayIconHandle(string assetRoot, string fileName)
         {
-            string path = Path.Combine(assetRoot, "idle.png");
+            string path = Path.Combine(assetRoot, fileName);
             if (!File.Exists(path)) return IntPtr.Zero;
             Size size = SystemInformation.SmallIconSize;
             using (Bitmap source = new Bitmap(path))
@@ -441,12 +506,36 @@ namespace Roost.App
             int size = PetSize();
             Screen screen = Screen.FromPoint(petAnchor);
             petAnchor = LayoutRules.RecoverPetPosition(petAnchor, new Size(size, size), screen.WorkingArea);
-            PetLayout layout = LayoutRules.Compute(petAnchor, new Size(size, size), new Size(DpiScale.Px(ListWidth), listHeight), bubbleSize, screen.WorkingArea, todos.Data.Settings.ListVisible, DpiScale.Px(8));
+            // 提醒泡和临时气泡共用宠物旁边的气泡位置：提醒泡挨着宠物，临时气泡在它外侧，互不覆盖。
+            int gap = DpiScale.Px(8);
+            Size message = bubble.Open ? bubbleSize : Size.Empty;
+            Size combined = message;
+            if (!reminderSize.IsEmpty)
+                combined = message.IsEmpty ? reminderSize : new Size(Math.Max(message.Width, reminderSize.Width), message.Height + gap + reminderSize.Height);
+            PetLayout layout = LayoutRules.Compute(petAnchor, new Size(size, size), new Size(DpiScale.Px(ListWidth), listHeight), combined, screen.WorkingArea, todos.Data.Settings.ListVisible, gap);
             Bounds = layout.WindowBounds;
             sprite.Bounds = layout.PetBounds;
             ApplyHitRegion();
             PlaceFloating(listWindow, layout.ListBounds, todos.Data.Settings.ListVisible);
-            PlaceFloating(bubbleWindow, layout.BubbleBounds, bubble.Open && !layout.BubbleBounds.IsEmpty);
+            Rectangle area = layout.BubbleBounds;
+            bool areaAbove = !area.IsEmpty && area.Bottom <= layout.PetBounds.Top;
+            Rectangle reminderRect = Rectangle.Empty, messageRect = Rectangle.Empty;
+            if (!area.IsEmpty && !reminderSize.IsEmpty)
+                reminderRect = AlignInArea(area, reminderSize, areaAbove ? area.Bottom - reminderSize.Height : area.Top, layout);
+            if (!area.IsEmpty && !message.IsEmpty)
+                messageRect = AlignInArea(area, message, reminderSize.IsEmpty || areaAbove ? area.Top : area.Bottom - message.Height, layout);
+            PlaceFloating(bubbleWindow, messageRect, bubble.Open && !messageRect.IsEmpty);
+            PlaceFloating(reminderWindow, reminderRect, !reminderRect.IsEmpty);
+        }
+
+        // 气泡在气泡区域里靠向清单那一侧对齐（没有清单时居中），和 LayoutRules 的气泡位置一致。
+        private Rectangle AlignInArea(Rectangle area, Size size, int y, PetLayout layout)
+        {
+            int x;
+            if (!todos.Data.Settings.ListVisible) x = area.Left + (area.Width - size.Width) / 2;
+            else if (layout.ListOnLeft) x = area.Left;
+            else x = area.Right - size.Width;
+            return new Rectangle(new Point(x, y), size);
         }
 
         // 清单和气泡窗口跟随宠物窗口；宠物窗口隐藏时一起隐藏。
@@ -461,7 +550,11 @@ namespace Roost.App
         protected override void OnVisibleChanged(EventArgs e)
         {
             base.OnVisibleChanged(e);
-            if (listWindow != null) ApplyLayout();
+            if (listWindow != null)
+            {
+                ApplyLayout();
+                UpdateTrayIcon();
+            }
         }
 
         private void ApplyOpacity()
@@ -588,6 +681,8 @@ namespace Roost.App
             moreButton.Glyph = todos.Data.Settings.ListExpanded ? Theme.Icons.ChevronUp : Theme.Icons.ChevronDown;
             UpdateEditHeader();
             LayoutList();
+            // 待办变了（新建、改时间、完成、删除、AI 改动、撤销），提醒也要重新判断。
+            if (reminders != null) TickReminders();
         }
 
         // 按当前状态排好清单里的各块，算出清单高度（物理像素），再重排窗口。
@@ -926,6 +1021,93 @@ namespace Roost.App
             }
         }
 
+        // 检查到点的提醒，刷新提醒泡，并把计时器定到下一次提醒（最长 1 分钟检查一次，防止时钟或休眠漏掉）。
+        private void TickReminders()
+        {
+            reminderTimer.Stop();
+            DateTime now = clock();
+            ReminderTick tick = reminders.Tick(now);
+            missedCount += tick.MissedCount;
+            UpdateReminderView();
+            DateTime? next = reminders.NextFire(now);
+            double wait = next.HasValue ? (next.Value - now).TotalMilliseconds + 200 : 60000;
+            reminderTimer.Interval = (int)Math.Max(1000, Math.Min(60000, wait));
+            reminderTimer.Start();
+        }
+
+        private void UpdateReminderView()
+        {
+            reminderSize = reminderView.ShowState(reminders.Active, missedCount, DescribeReminder);
+            UpdatePetState();
+            UpdateTrayIcon();
+            ApplyLayout();
+        }
+
+        // 提醒泡里的时间说明，例如「今天 15:00 · 10 分钟后开始」「今天（只有日期）」。
+        private string DescribeReminder(TodoItem item)
+        {
+            DateTime now = clock();
+            string label = TodoRules.TimeLabel(item, now, todos.Data.Settings.DayStartMinutes);
+            DateTime date;
+            TimeSpan time;
+            if (!TodoRules.TryGetDueTime(item, out time)) return label + "（只有日期）";
+            if (!TodoRules.TryGetDueDate(item, out date)) return label;
+            TimeSpan left = date.Add(time) - now;
+            if (left.TotalMinutes <= 0) return label;
+            int minutes = (int)Math.Ceiling(left.TotalMinutes);
+            return minutes < 60
+                ? string.Format("{0} · {1} 分钟后开始", label, minutes)
+                : string.Format("{0} · {1} 小时 {2} 分钟后开始", label, minutes / 60, minutes % 60);
+        }
+
+        private void CompleteReminder(string id)
+        {
+            reminders.Complete(id);
+            Celebrate();
+            RefreshList();
+        }
+
+        private void SnoozeReminder(string id, int minutes)
+        {
+            reminders.Snooze(id, TimeSpan.FromMinutes(minutes), clock());
+            TickReminders();
+        }
+
+        private void DismissReminder(string id)
+        {
+            reminders.Dismiss(id);
+            TickReminders();
+        }
+
+        private void DismissAllReminders()
+        {
+            reminders.DismissAll();
+            TickReminders();
+        }
+
+        // 宠物隐藏（手动或全屏）时有提醒：托盘图标换成提醒状态的猫，悬停提示条数（PRD 10.3）。
+        private void UpdateTrayIcon()
+        {
+            if (tray == null || reminders == null) return;
+            int count = reminders.Active.Count;
+            bool alert = count > 0 && !Visible && reminderTrayIconHandle != IntPtr.Zero;
+            IntPtr wanted = alert ? reminderTrayIconHandle : trayIconHandle;
+            if (wanted != IntPtr.Zero && (tray.Icon == null || tray.Icon.Handle != wanted)) tray.Icon = Icon.FromHandle(wanted);
+            tray.Text = alert ? string.Format("Roost：有 {0} 件事到点了（显示宠物查看）", count) : "Roost（右键打开菜单）";
+        }
+
+        private void PowerModeChanged(object sender, PowerModeChangedEventArgs e)
+        {
+            if (!IsHandleCreated) return;
+            if (e.Mode == PowerModes.Suspend) BeginInvoke((MethodInvoker)delegate { todos.SaveSettings(); });
+            else if (e.Mode == PowerModes.Resume) BeginInvoke((MethodInvoker)delegate { TickReminders(); });
+        }
+
+        private void TimeChanged(object sender, EventArgs e)
+        {
+            if (IsHandleCreated) BeginInvoke((MethodInvoker)delegate { TickReminders(); });
+        }
+
         private void ShowBubble(string message, string actionText, Action action)
         {
             bubbleSize = bubble.Show(message, actionText, action);
@@ -967,9 +1149,10 @@ namespace Roost.App
 
         private void UpdatePetState()
         {
-            // PRD 6.3 优先级：拖动 > 提醒 > 思考 > 庆祝 > 悬停 > 待机。提醒在 M3 接入。
+            // PRD 6.3 优先级：拖动 > 提醒 > 思考 > 庆祝 > 悬停 > 待机。
             PetState state;
             if (dragStarted) state = PetState.Drag;
+            else if (reminders != null && reminders.Active.Count > 0) state = PetState.Reminder;
             else if (talkCancel != null) state = PetState.Thinking;
             else if (celebrating) state = PetState.Celebrate;
             else if (hovering) state = PetState.Hover;
@@ -1055,7 +1238,7 @@ namespace Roost.App
         private bool IsForegroundFullscreen()
         {
             IntPtr foreground = NativeMethods.GetForegroundWindow();
-            if (foreground == IntPtr.Zero || foreground == Handle || foreground == listWindow.Handle || foreground == bubbleWindow.Handle) return false;
+            if (foreground == IntPtr.Zero || foreground == Handle || foreground == listWindow.Handle || foreground == bubbleWindow.Handle || foreground == reminderWindow.Handle) return false;
             NativeMethods.RECT window;
             if (!NativeMethods.GetWindowRect(foreground, out window)) return false;
             IntPtr monitor = NativeMethods.MonitorFromWindow(foreground, NativeMethods.MONITOR_DEFAULTTONEAREST);
@@ -1078,6 +1261,7 @@ namespace Roost.App
             }
             else if (e.Reason == SessionSwitchReason.SessionUnlock)
             {
+                if (IsHandleCreated) BeginInvoke((MethodInvoker)delegate { TickReminders(); });
                 screenLocked = false;
                 sprite.Paused = !Visible;
             }
