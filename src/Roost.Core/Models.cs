@@ -18,8 +18,8 @@ namespace Roost.Core
         public string UpdatedAtUtc { get; set; }
         public string CompletedAtUtc { get; set; }
         public string DeletedAtUtc { get; set; }
-        // 提醒状态（PRD 第 10 节），都针对 ReminderKey 这一个提醒时间；待办的时间改了，旧状态自动作废。
-        // ReminderKey / SnoozeUntil 是本地时间：yyyy-MM-dd HH:mm / yyyy-MM-dd HH:mm:ss。
+        // 提醒状态（PRD 第 10 节），都针对 ReminderKey 记下的那个待办时间（日期 + 时刻）；待办的时间改了，旧状态自动作废。
+        // SnoozeUntil 是本地时间 yyyy-MM-dd HH:mm:ss。
         public string ReminderKey { get; set; }
         public bool ReminderDone { get; set; }
         public string SnoozeUntil { get; set; }

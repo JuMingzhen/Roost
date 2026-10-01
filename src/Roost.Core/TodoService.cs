@@ -136,7 +136,7 @@ namespace Roost.Core
                 TodoItem item = Find(id);
                 DateTime? moment = ReminderRules.BaseMoment(item, Data.Settings);
                 if (!moment.HasValue) continue;
-                item.ReminderKey = ReminderRules.Key(moment.Value);
+                item.ReminderKey = ReminderRules.Key(item);
                 item.ReminderDone = true;
                 item.SnoozeUntil = null;
             }
@@ -148,7 +148,7 @@ namespace Roost.Core
             TodoItem item = Find(id);
             DateTime? moment = ReminderRules.BaseMoment(item, Data.Settings);
             if (!moment.HasValue) return;
-            item.ReminderKey = ReminderRules.Key(moment.Value);
+            item.ReminderKey = ReminderRules.Key(item);
             item.ReminderDone = false;
             item.SnoozeUntil = ReminderRules.FormatSnooze(until);
             Save();

@@ -31,7 +31,7 @@ internal static class TestRunner
         Run("编辑模式：批量删除整批撤销、批量加星标", TestBatchEdit);
         Run("提醒时间：提前量、只有日期、不早于一天起点、无期限不提醒", TestReminderMoments);
         Run("提醒判定：按时、补一次、错过汇总、提前 0 分钟不漏", TestReminderClassify);
-        Run("提醒状态：知道了、稍后、改时间后重新提醒、03:59 / 04:00 边界", TestReminderStates);
+        Run("提醒状态：知道了、改提前量不复活、稍后、改时间后重新提醒、03:59 / 04:00 边界", TestReminderStates);
         Run("旧数据文件没有提醒字段时用默认值", TestReminderSettingsDefaults);
         Run("提醒服务：合并冒泡、完成、稍后、知道了、重启不重复", TestReminderService);
         Run("提醒服务：休眠错过汇总、改时间或完成后移出提醒泡", TestReminderServiceMissedAndPrune);
@@ -276,9 +276,14 @@ internal static class TestRunner
         RoostSettings settings = new RoostSettings();
         TodoItem meeting = Due("2026-09-30", "15:00");
         DateTime moment = new DateTime(2026, 9, 30, 14, 50, 0);
-        meeting.ReminderKey = ReminderRules.Key(moment);
+        meeting.ReminderKey = ReminderRules.Key(meeting);
         meeting.ReminderDone = true;
         Equal(ReminderVerdict.None, ReminderRules.Classify(meeting, settings, moment.AddMinutes(1), moment.AddSeconds(30)));
+
+        // 只改设置里的提前量：已经「知道了」的不会再冒出来。
+        settings.ReminderLeadMinutes = 30;
+        Equal(ReminderVerdict.None, ReminderRules.Classify(meeting, settings, moment.AddMinutes(1), moment.AddSeconds(30)));
+        settings.ReminderLeadMinutes = 10;
 
         // 改了时间：旧的「知道了」作废，按新时间重新提醒。
         meeting.DueTime = "16:00";
@@ -286,7 +291,7 @@ internal static class TestRunner
 
         // 稍后提醒：到点前不提醒，到点提醒；事情已过点也照样提醒。
         TodoItem call = Due("2026-09-30", "15:00");
-        call.ReminderKey = ReminderRules.Key(moment);
+        call.ReminderKey = ReminderRules.Key(call);
         call.SnoozeUntil = ReminderRules.FormatSnooze(moment.AddHours(1));
         Equal(ReminderVerdict.None, ReminderRules.Classify(call, settings, moment.AddMinutes(59), moment.AddMinutes(58)));
         Equal(ReminderVerdict.Fire, ReminderRules.Classify(call, settings, moment.AddHours(1), moment.AddMinutes(59)));

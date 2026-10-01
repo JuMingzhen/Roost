@@ -21,7 +21,6 @@ namespace Roost.Core
         // 到点后隔了这么久才检查到（休眠、没运行），算作错过。
         public static readonly TimeSpan Grace = TimeSpan.FromMinutes(2);
 
-        private const string KeyFormat = "yyyy-MM-dd HH:mm";
         private const string SnoozeFormat = "yyyy-MM-dd HH:mm:ss";
 
         // 待办本来的提醒时间：有时刻的提前几分钟；只有日期的在当天设定时刻（不早于一天起点）。
@@ -35,9 +34,11 @@ namespace Roost.Core
             return date.AddMinutes(Math.Max(settings.DateReminderMinutes, settings.DayStartMinutes));
         }
 
-        public static string Key(DateTime baseMoment)
+        // 提醒状态对应的是待办本身的时间（日期 + 时刻），而不是提醒时间：
+        // 改了待办的时间，旧状态作废、重新提醒；只改设置里的提前量，已处理的提醒不会再冒出来。
+        public static string Key(TodoItem item)
         {
-            return baseMoment.ToString(KeyFormat, CultureInfo.InvariantCulture);
+            return (item.DueDate ?? string.Empty) + " " + (item.DueTime ?? string.Empty);
         }
 
         public static string FormatSnooze(DateTime value)
@@ -50,7 +51,7 @@ namespace Roost.Core
         {
             DateTime? baseMoment = BaseMoment(item, settings);
             if (!baseMoment.HasValue) return null;
-            if (item.ReminderKey != Key(baseMoment.Value)) return baseMoment;
+            if (item.ReminderKey != Key(item)) return baseMoment;
             if (item.ReminderDone) return null;
             DateTime snooze;
             if (!string.IsNullOrEmpty(item.SnoozeUntil) &&
@@ -62,7 +63,7 @@ namespace Roost.Core
         public static bool IsSnoozed(TodoItem item, RoostSettings settings)
         {
             DateTime? baseMoment = BaseMoment(item, settings);
-            return baseMoment.HasValue && item.ReminderKey == Key(baseMoment.Value) && !item.ReminderDone && !string.IsNullOrEmpty(item.SnoozeUntil);
+            return baseMoment.HasValue && item.ReminderKey == Key(item) && !item.ReminderDone && !string.IsNullOrEmpty(item.SnoozeUntil);
         }
 
         // lastCheck 是上一次检查的时间（没有记录时传 null，视为刚检查过）。
