@@ -41,12 +41,13 @@ namespace Roost.App
 
         internal const string FontName = "Microsoft YaHei UI";
 
-        // 字号（像素 → 磅）：11px 8.25 / 12px 9 / 13px 9.75 / 16px 12 / 18px 13.5 / 20px 15。
+        // 字号（像素 → 磅）：11px 8.25 / 12px 9 / 13px 9.75 / 15px 11.25 / 16px 12 / 18px 13.5 / 20px 15。
         internal static readonly Font Caption = new Font(FontName, 9F);
         internal static readonly Font Body = new Font(FontName, 9.75F);
         internal static readonly Font BodyBold = new Font(FontName, 9.75F, FontStyle.Bold);
         internal static readonly Font Small = new Font(FontName, 8.25F);
         internal static readonly Font CaptionBold = new Font(FontName, 9F, FontStyle.Bold);
+        internal static readonly Font CardTitle = new Font(FontName, 11.25F, FontStyle.Bold);
         internal static readonly Font ListTitle = new Font(FontName, 12F, FontStyle.Bold);
         internal static readonly Font DialogTitle = new Font(FontName, 13.5F, FontStyle.Bold);
         internal static readonly Font PageTitle = new Font(FontName, 15F, FontStyle.Bold);

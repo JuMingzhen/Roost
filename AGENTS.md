@@ -48,6 +48,7 @@
 - 指定真实 Windows 缩放门禁：`.\verify-dpi.ps1 -ExpectedScalePercent 100`（另跑 125、150）。
 - 10 分钟资源占用与隐藏暂停：`.\verify-resource.ps1`。
 - AI 改计划流程（本地假模型，不需要 key）：`.\verify-ai.ps1`。
+- 提醒流程（虚构时钟，覆盖到点、合并、完成 / 稍后 / 知道了、隐藏时托盘提示、全屏、错过汇总，并检查提醒泡排版）：`.\verify-reminder.ps1`（也由 `verify-dpi.ps1` 执行）。
 - AI 评测集（真实模型，需要 key，会产生少量费用）：`.\eval-ai.ps1 -Preset <deepseek|qwen|zhipu|doubao>`。
 - 全量自动检查：`.\verify-all.ps1`（约 11 分钟）。
 
