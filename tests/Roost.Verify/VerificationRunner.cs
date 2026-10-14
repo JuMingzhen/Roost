@@ -594,9 +594,17 @@ internal static class VerificationRunner
         checkedForms.Add("清单");
 
         // 右键菜单：在屏幕上弹出后截图留证，并检查菜单项排版。
+        // 菜单窗口最外一圈会透出下层的画面，先垫一个白色窗口，留白检查才不受当时桌面上有什么的影响。
+        int backingSize = (int)Math.Round(400 * DpiScaleForVerify());
+        ClickSinkForm menuBacking = new ClickSinkForm(new Rectangle(0, 0, backingSize, backingSize));
+        menuBacking.BackColor = Color.White;
+        menuBacking.TopMost = true;
+        menuBacking.Show();
+        Pump(100);
         ContextMenuStrip menu = pet.MenuForTest;
         menu.Show(new Point(40, 40));
         Pump(150);
+        if (!menuBacking.Bounds.Contains(menu.Bounds)) problems.Add("右键菜单 超出了垫底的白色窗口，留白检查不可靠");
         CheckLayout(menu, "右键菜单", problems);
         using (Bitmap shot = new Bitmap(Math.Max(1, menu.Width), Math.Max(1, menu.Height)))
         {
@@ -607,6 +615,7 @@ internal static class VerificationRunner
         }
         checkedForms.Add("右键菜单");
         menu.Close();
+        menuBacking.Close();
         Pump(50);
 
         pet.ShowBubbleForTest("还没有配置模型，暂时不能跟我说话。不配置也能正常使用本地待办。", "去设置");
