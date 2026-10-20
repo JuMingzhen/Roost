@@ -9,6 +9,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Web.Script.Serialization;
 using Roost.Core;
 
 internal static class TestRunner
@@ -40,6 +41,8 @@ internal static class TestRunner
         Run("全屏窗口判定", TestFullscreenRules);
         Run("原子写入中强杀不损坏主文件", TestCrashDuringWrite);
         Run("自动备份只保留最近七份", TestBackupRetention);
+        Run("数据导出：未删除的待办（含已完成）、格式版本、可读回、不改动数据文件", TestExport);
+        Run("数据导出：写入失败不留半个文件，错误信息不含待办内容", TestExportFailure);
         Run("AI 发送范围：未完成 + 7 天内完成", TestAiContextScope);
         Run("AI 提示词按一天起点给出今天和明天", TestAiPromptDates);
         Run("AI 回复解析为预览操作", TestAiParseOperations);
@@ -474,6 +477,66 @@ internal static class TestRunner
         }
         Equal(7, repository.BackupCount());
         Equal(9, repository.Load().Settings.PetX);
+    }
+
+    private static void TestExport()
+    {
+        string root = NewTestDirectory();
+        string dataPath = Path.Combine(root, "data.json");
+        TodoService service = new TodoService(new TodoRepository(dataPath));
+        TodoItem open = service.Create("虚构待办：交水费", "虚构备注", "2026-10-20", "09:30", true);
+        service.SnoozeReminder(open.Id, new DateTime(2026, 10, 20, 9, 30, 0));
+        TodoItem done = service.Create("虚构待办：还书", null, "2026-10-18", null, false);
+        service.ToggleCompleted(done.Id);
+        TodoItem removed = service.Create("虚构待办：已删除的一条", null, null, null, false);
+        service.Delete(removed.Id);
+        byte[] dataBefore = File.ReadAllBytes(dataPath);
+        int backupsBefore = new TodoRepository(dataPath).BackupCount();
+
+        string exportPath = Path.Combine(root, "导出", "Roost-导出.json");
+        DateTime now = new DateTime(2026, 10, 19, 8, 0, 0, DateTimeKind.Utc);
+        TodoExport.Write(exportPath, service.Data.Todos, now);
+
+        // 导出只读数据，不写数据文件、不多出备份。
+        True(dataBefore.SequenceEqual(File.ReadAllBytes(dataPath)));
+        Equal(backupsBefore, new TodoRepository(dataPath).BackupCount());
+
+        string json = File.ReadAllText(exportPath, Encoding.UTF8);
+        True(json.Contains("\"Format\":\"roost-todos\""));
+        True(json.Contains("\"FormatVersion\":1"));
+        False(json.Contains(removed.Id));
+        TodoExportFile file = TodoExport.Parse(json);
+        Equal(now.ToString("o"), file.ExportedAtUtc);
+        Equal(2, file.Todos.Count);
+        // 读回的每条待办与数据里的逐字段一致（含完成时间、备注、提醒状态）。
+        JavaScriptSerializer serializer = new JavaScriptSerializer();
+        foreach (TodoItem original in new[] { open, done })
+        {
+            TodoItem exported = file.Todos.Find(delegate(TodoItem item) { return item.Id == original.Id; });
+            True(exported != null);
+            Equal(serializer.Serialize(original), serializer.Serialize(exported));
+        }
+
+        bool rejected = false;
+        try { TodoExport.Parse(File.ReadAllText(dataPath, Encoding.UTF8)); }
+        catch (InvalidDataException) { rejected = true; }
+        True(rejected);
+    }
+
+    private static void TestExportFailure()
+    {
+        string root = NewTestDirectory();
+        TodoService service = new TodoService(new TodoRepository(Path.Combine(root, "data.json")));
+        TodoItem item = service.Create("虚构待办：不该出现在错误信息里", null, null, null, false);
+        // 目标路径被同名文件夹占着，写入必然失败。
+        string blocked = Path.Combine(root, "blocked.json");
+        Directory.CreateDirectory(blocked);
+        Exception error = null;
+        try { TodoExport.Write(blocked, service.Data.Todos, DateTime.UtcNow); }
+        catch (Exception exception) { error = exception; }
+        True(error is IOException || error is UnauthorizedAccessException);
+        False(error.Message.Contains(item.Title));
+        Equal(0, Directory.GetFiles(root, "blocked.json.tmp.*").Length);
     }
 
     private static void TestAiContextScope()
