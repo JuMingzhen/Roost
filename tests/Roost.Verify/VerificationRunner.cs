@@ -44,6 +44,9 @@ internal static class VerificationRunner
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        // 快捷键被别的程序占用时，宠物窗口会弹提示框；自动验证不能停在模态框上。
+        // 一键隐藏快捷键是否注册成功由 system 检查单独判定。
+        Environment.SetEnvironmentVariable("ROOST_SKIP_HOTKEY_WARNING", "1");
         if (args.Length == 0)
         {
             Console.Error.WriteLine("Usage: Roost.Verify.exe <system|pixel|cpu|ai|layout|reminder> ...");
@@ -334,7 +337,6 @@ internal static class VerificationRunner
     {
         string credentialTarget = "Roost/Verify/" + Guid.NewGuid().ToString("N");
         Environment.SetEnvironmentVariable("ROOST_CREDENTIAL_TARGET", credentialTarget);
-        Environment.SetEnvironmentVariable("ROOST_SKIP_HOTKEY_WARNING", "1");
         CredentialStore.Write(CredentialStore.ApiKeyTarget, "sk-verify-FAKE");
         ScriptedModelServer server = new ScriptedModelServer();
         Dictionary<string, object> result = Base("ai");
@@ -529,7 +531,6 @@ internal static class VerificationRunner
     private static int RunLayout(string outputPath, string screenshotDirectory)
     {
         Directory.CreateDirectory(screenshotDirectory);
-        Environment.SetEnvironmentVariable("ROOST_SKIP_HOTKEY_WARNING", "1");
         List<string> problems = new List<string>();
         List<string> checkedForms = new List<string>();
         int scale = 0;
