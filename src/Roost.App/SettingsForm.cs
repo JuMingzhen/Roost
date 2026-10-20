@@ -27,6 +27,9 @@ namespace Roost.App
         private readonly ComboBox dateReminderBox;
         private readonly Label dateReminderHint;
         private readonly List<int> dateReminderChoices = new List<int>();
+        private readonly ToggleSwitch startupSwitch;
+        private readonly bool startupWasOn;
+        private readonly AutoStart autoStart;
         private readonly RoostSettings settings;
         private readonly Panel[] pages;
         private readonly RoundButton[] navButtons;
@@ -55,9 +58,10 @@ namespace Roost.App
 
         internal event EventHandler SettingsSaved;
 
-        internal SettingsForm(RoostSettings settings)
+        internal SettingsForm(RoostSettings settings, AutoStart autoStart)
         {
             this.settings = settings;
+            this.autoStart = autoStart;
             Text = "Roost 设置";
             Font = Theme.Body;
             BackColor = Theme.Paper;
@@ -201,9 +205,11 @@ namespace Roost.App
             FillDateReminderChoices(settings.DateReminderMinutes);
             dayStart.ValueChanged += delegate { FillDateReminderChoices(SelectedDateReminder()); };
             Divider(generalCard, 64);
-            Row(generalCard, 65, "开机自启", "将在 M4 提供");
-            ToggleSwitch startup = new ToggleSwitch(string.Empty) { Location = new Point(CardWidth - 16 - 40, 65 + 20), Size = new Size(40, 24), Enabled = false, AccessibleName = "开机自启" };
-            generalCard.Controls.Add(startup);
+            Row(generalCard, 65, "开机自启", "登录 Windows 后自动打开 Roost");
+            // 开关显示注册表里的真实状态（决策 0004），保存时才写入。
+            startupWasOn = autoStart.IsEnabled;
+            startupSwitch = new ToggleSwitch(string.Empty) { Location = new Point(CardWidth - 16 - 40, 65 + 20), Size = new Size(40, 24), Checked = startupWasOn, AccessibleName = "开机自启" };
+            generalCard.Controls.Add(startupSwitch);
             SaveButton(general);
 
             // 关于
@@ -572,6 +578,12 @@ namespace Roost.App
             dayStart.Value = DateTime.Today.AddMinutes(minutes);
         }
 
+        internal bool StartupOnForTest
+        {
+            get { return startupSwitch.Checked; }
+            set { startupSwitch.Checked = value; }
+        }
+
         internal void SaveForTest()
         {
             SaveSettings();
@@ -610,9 +622,27 @@ namespace Roost.App
             settings.DayStartMinutes = DayStartMinutes();
             settings.ReminderLeadMinutes = ReminderRules.LeadChoices[Math.Max(0, leadBox.SelectedIndex)];
             settings.DateReminderMinutes = Math.Max(SelectedDateReminder(), settings.DayStartMinutes);
+            if (startupSwitch.Checked != startupWasOn) ApplyAutoStart(startupSwitch.Checked);
             EventHandler handler = SettingsSaved;
             if (handler != null) handler(this, EventArgs.Empty);
             Close();
+        }
+
+        private void ApplyAutoStart(bool on)
+        {
+            try
+            {
+                if (on) autoStart.Enable();
+                else autoStart.Disable();
+            }
+            catch (System.Security.SecurityException) { AutoStartFailed(); }
+            catch (UnauthorizedAccessException) { AutoStartFailed(); }
+            catch (IOException) { AutoStartFailed(); }
+        }
+
+        private void AutoStartFailed()
+        {
+            MessageBox.Show(this, "开机自启没有改成功：系统不允许修改启动项。其他设置已保存。", "Roost", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 }

@@ -10,6 +10,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
+using Microsoft.Win32;
 using Roost.Core;
 
 internal static class TestRunner
@@ -44,6 +45,7 @@ internal static class TestRunner
         Run("数据导出：未删除的待办（含已完成）、格式版本、可读回、不改动数据文件", TestExport);
         Run("数据导出：写入失败不留半个文件，错误信息不含待办内容", TestExportFailure);
         Run("快捷键：解析、保存写法与显示，不合法或重复时回退默认", TestHotKeys);
+        Run("开机自启：开、关，程序挪走后更新路径，另一份还在时不动，不碰真实自启项", TestAutoStart);
         Run("AI 发送范围：未完成 + 7 天内完成", TestAiContextScope);
         Run("AI 提示词按一天起点给出今天和明天", TestAiPromptDates);
         Run("AI 回复解析为预览操作", TestAiParseOperations);
@@ -581,6 +583,63 @@ internal static class TestRunner
         settings = new TodoRepository(path).Load().Settings;
         Equal("Ctrl+Alt+H", settings.ToggleHotKey);
         Equal("Ctrl+Alt+Space", settings.TalkHotKey);
+    }
+
+    private static void TestAutoStart()
+    {
+        string realBefore = RealAutoStartValue();
+        string testKey = @"Software\Roost.Tests." + Guid.NewGuid().ToString("N");
+        string runKey = testKey + @"\Run";
+        string root = NewTestDirectory();
+        string exe = CreateFakeExe(root, "当前位置");
+        AutoStart autoStart = new AutoStart(runKey, "Roost", exe);
+        try
+        {
+            False(autoStart.IsEnabled);
+            False(autoStart.Repair());
+            autoStart.Enable();
+            True(autoStart.IsEnabled);
+            Equal(exe, autoStart.RegisteredPath());
+            using (RegistryKey key = Registry.CurrentUser.OpenSubKey(runKey))
+                Equal("\"" + exe + "\"", (string)key.GetValue("Roost"));
+            False(autoStart.Repair());
+            autoStart.Disable();
+            False(autoStart.IsEnabled);
+            autoStart.Disable();
+            // 没开自启时，Repair 不会自己打开。
+            False(autoStart.Repair());
+            False(autoStart.IsEnabled);
+
+            // 文件夹被挪走：登记的路径已经不存在，改成现在的位置。
+            new AutoStart(runKey, "Roost", Path.Combine(root, "旧位置", "Roost.exe")).Enable();
+            True(autoStart.Repair());
+            Equal(exe, autoStart.RegisteredPath());
+
+            // 登记的是另一份还在的 Roost：不动。
+            string other = CreateFakeExe(root, "另一份");
+            new AutoStart(runKey, "Roost", other).Enable();
+            False(autoStart.Repair());
+            Equal(other, autoStart.RegisteredPath());
+        }
+        finally
+        {
+            Registry.CurrentUser.DeleteSubKeyTree(testKey, false);
+        }
+        Equal(realBefore, RealAutoStartValue());
+    }
+
+    private static string CreateFakeExe(string root, string folder)
+    {
+        string path = Path.Combine(root, folder, "Roost.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(path));
+        File.WriteAllBytes(path, new byte[0]);
+        return path;
+    }
+
+    private static string RealAutoStartValue()
+    {
+        using (RegistryKey key = Registry.CurrentUser.OpenSubKey(AutoStart.RunKeyPath))
+            return key == null ? null : key.GetValue(AutoStart.DefaultValueName) as string;
     }
 
     private static void TestAiContextScope()

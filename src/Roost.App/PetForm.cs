@@ -49,6 +49,7 @@ namespace Roost.App
         // 错过提醒的条数，显示在汇总泡里，点「知道了」清零。
         private int missedCount;
         private Func<DateTime> clock = delegate { return DateTime.Now; };
+        private AutoStart autoStart = AutoStart.ForCurrentUser(Application.ExecutablePath);
         private readonly ToolStripMenuItem showHideItem;
         private readonly Timer fullscreenTimer;
         private readonly Timer undoTimer;
@@ -118,6 +119,12 @@ namespace Roost.App
         internal void SetClockForTest(Func<DateTime> value)
         {
             clock = value;
+        }
+
+        // 测试用单独的注册表键，不碰真实的自启项。
+        internal void SetAutoStartForTest(AutoStart value)
+        {
+            autoStart = value;
         }
 
         internal void TickRemindersForTest()
@@ -1175,7 +1182,7 @@ namespace Roost.App
                 settingsForm.Activate();
                 return;
             }
-            settingsForm = new SettingsForm(todos.Data.Settings);
+            settingsForm = new SettingsForm(todos.Data.Settings, autoStart);
             settingsForm.SettingsSaved += delegate
             {
                 todos.SaveSettings();

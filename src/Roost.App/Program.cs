@@ -35,7 +35,11 @@ namespace Roost.App
 
                 string dataRoot = Environment.GetEnvironmentVariable("ROOST_DATA_DIR");
                 if (string.IsNullOrEmpty(dataRoot))
+                {
                     dataRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Roost");
+                    // 便携版的文件夹被挪走后，把开机自启指向现在的位置（决策 0004）。指定了数据目录的测试运行不改。
+                    RepairAutoStart();
+                }
                 string dataPath = Path.Combine(dataRoot, "data.json");
                 string assetRoot = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "cat");
 
@@ -51,6 +55,14 @@ namespace Roost.App
                     return 1;
                 }
             }
+        }
+
+        private static void RepairAutoStart()
+        {
+            try { AutoStart.ForCurrentUser(Application.ExecutablePath).Repair(); }
+            catch (System.Security.SecurityException) { }
+            catch (UnauthorizedAccessException) { }
+            catch (IOException) { }
         }
 
         private static void EnablePerMonitorDpi()

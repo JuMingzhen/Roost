@@ -10,6 +10,7 @@ using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
+using Microsoft.Win32;
 using Roost.App;
 using Roost.Core;
 
@@ -36,6 +37,7 @@ internal sealed class ClickSinkForm : Form
 internal static class VerificationRunner
 {
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
+    private static string testAutoStartKey;
 
     [STAThread]
     private static int Main(string[] args)
@@ -93,6 +95,7 @@ internal static class VerificationRunner
         string assets = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "cat");
         uint message = NativeMethods.RegisterWindowMessage("Roost.Verify." + Guid.NewGuid().ToString("N"));
         PetForm pet = new PetForm(service, message, assets);
+        pet.SetAutoStartForTest(TestAutoStart());
         ClickSinkForm sink = new ClickSinkForm(pet.Bounds);
         sink.TopMost = true;
         sink.Show();
@@ -139,8 +142,25 @@ internal static class VerificationRunner
         pet.EvaluateFullscreenForTest(false);
         bool restoredAfterFullscreen = pet.Visible;
 
+        // 开机自启：设置里打开并保存，注册表出现指向当前程序的自启项，重新打开设置显示为开；关掉并保存后自启项消失。
+        // 用单独的注册表键，并确认真实的自启项没有变化。
+        string realAutoStartBefore = RealAutoStartValue();
+        AutoStart testAutoStart = TestAutoStart();
+        SettingsForm autoStartForm = new SettingsForm(new RoostSettings(), testAutoStart);
+        bool autoStartOffByDefault = !autoStartForm.StartupOnForTest;
+        autoStartForm.StartupOnForTest = true;
+        autoStartForm.SaveForTest();
+        bool autoStartWritten = testAutoStart.IsEnabled && string.Equals(testAutoStart.RegisteredPath(), Path.GetFullPath(Application.ExecutablePath), StringComparison.OrdinalIgnoreCase);
+        autoStartForm = new SettingsForm(new RoostSettings(), testAutoStart);
+        bool autoStartShownOn = autoStartForm.StartupOnForTest;
+        autoStartForm.StartupOnForTest = false;
+        autoStartForm.SaveForTest();
+        bool autoStartToggle = autoStartOffByDefault && autoStartWritten && autoStartShownOn && !testAutoStart.IsEnabled;
+        bool realAutoStartUntouched = RealAutoStartValue() == realAutoStartBefore;
+
         bool pass = blank.Count == 12 && blankClicks == 12 && petClickHandled && trayLabels && settingsEntries && listCornersRounded &&
-                    pet.HotKeyRegisteredForTest && hiddenByHotkey && pausedWhileHidden && hiddenByFullscreen && restoredAfterFullscreen;
+                    pet.HotKeyRegisteredForTest && hiddenByHotkey && pausedWhileHidden && hiddenByFullscreen && restoredAfterFullscreen &&
+                    autoStartToggle && realAutoStartUntouched;
         Dictionary<string, object> result = Base("system");
         result["actualScalePercent"] = GetScalePercent(pet);
         result["blankPointsSent"] = blank.Count;
@@ -157,6 +177,8 @@ internal static class VerificationRunner
         result["animationPausedWhileHidden"] = pausedWhileHidden;
         result["fullscreenHides"] = hiddenByFullscreen;
         result["fullscreenExitRestores"] = restoredAfterFullscreen;
+        result["autoStartToggleWritesRegistry"] = autoStartToggle;
+        result["realAutoStartUntouched"] = realAutoStartUntouched;
         result["overallPass"] = pass;
         result["status"] = pass ? "PASS" : "FAIL";
         WriteJson(outputPath, result);
@@ -539,7 +561,7 @@ internal static class VerificationRunner
         Environment.SetEnvironmentVariable("ROOST_CREDENTIAL_TARGET", "Roost/Verify/" + Guid.NewGuid().ToString("N"));
         string keyTarget = CredentialStore.ApiKeyTargetFor(settings);
         CredentialStore.Write(keyTarget, "sk-verify-FAKE-ABCD");
-        SettingsForm settingsForm = new SettingsForm(settings);
+        SettingsForm settingsForm = new SettingsForm(settings, TestAutoStart());
         ShowOffscreen(settingsForm);
         scale = GetScalePercent(settingsForm);
         for (int i = 0; i < settingsForm.PageCountForTest; i++)
@@ -776,7 +798,7 @@ internal static class VerificationRunner
 
         // 设置「提醒」页：提前量和只有日期的提醒时刻能保存；时刻选项不早于一天起点，改了一天起点跟着变。
         RoostSettings reminderSettings = new RoostSettings();
-        SettingsForm settingsForm = new SettingsForm(reminderSettings);
+        SettingsForm settingsForm = new SettingsForm(reminderSettings, TestAutoStart());
         bool choicesAfterDayStart = settingsForm.DateReminderChoicesForTest[0] == 4 * 60 && settingsForm.DateReminderChoicesForTest.Contains(9 * 60);
         settingsForm.SetDayStartForTest(10 * 60);
         bool choicesFollowDayStart = settingsForm.DateReminderChoicesForTest[0] == 10 * 60 && !settingsForm.DateReminderChoicesForTest.Contains(9 * 60);
@@ -910,6 +932,23 @@ internal static class VerificationRunner
         if (marginRight < marginLeft - tolerance || marginRight > marginLeft + tolerance * 3 || Math.Abs(marginTop - marginBottom) > tolerance)
             return string.Format("文字留白不匀称：左 {0} 右 {1} 上 {2} 下 {3}", marginLeft, marginRight, marginTop, marginBottom);
         return null;
+    }
+
+    // 测试用的自启项写在单独的注册表键下（进程结束时删除），不碰真实的自启项。
+    private static AutoStart TestAutoStart()
+    {
+        if (testAutoStartKey == null)
+        {
+            testAutoStartKey = @"Software\Roost.Verify." + Guid.NewGuid().ToString("N");
+            AppDomain.CurrentDomain.ProcessExit += delegate { Registry.CurrentUser.DeleteSubKeyTree(testAutoStartKey, false); };
+        }
+        return new AutoStart(testAutoStartKey + @"\Run", AutoStart.DefaultValueName, Application.ExecutablePath);
+    }
+
+    private static string RealAutoStartValue()
+    {
+        using (RegistryKey key = Registry.CurrentUser.OpenSubKey(AutoStart.RunKeyPath))
+            return key == null ? null : key.GetValue(AutoStart.DefaultValueName) as string;
     }
 
     private static float DpiScaleForVerify()
