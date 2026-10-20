@@ -151,6 +151,7 @@ namespace Roost.Core
                 data.Settings.ReminderLeadMinutes = 10;
             if (data.Settings.DateReminderMinutes < 0 || data.Settings.DateReminderMinutes >= 24 * 60)
                 data.Settings.DateReminderMinutes = 9 * 60;
+            HotKeyRules.Normalize(data.Settings);
             return data;
         }
 

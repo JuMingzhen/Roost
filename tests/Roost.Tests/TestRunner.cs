@@ -43,6 +43,7 @@ internal static class TestRunner
         Run("自动备份只保留最近七份", TestBackupRetention);
         Run("数据导出：未删除的待办（含已完成）、格式版本、可读回、不改动数据文件", TestExport);
         Run("数据导出：写入失败不留半个文件，错误信息不含待办内容", TestExportFailure);
+        Run("快捷键：解析、保存写法与显示，不合法或重复时回退默认", TestHotKeys);
         Run("AI 发送范围：未完成 + 7 天内完成", TestAiContextScope);
         Run("AI 提示词按一天起点给出今天和明天", TestAiPromptDates);
         Run("AI 回复解析为预览操作", TestAiParseOperations);
@@ -537,6 +538,49 @@ internal static class TestRunner
         True(error is IOException || error is UnauthorizedAccessException);
         False(error.Message.Contains(item.Title));
         Equal(0, Directory.GetFiles(root, "blocked.json.tmp.*").Length);
+    }
+
+    private static void TestHotKeys()
+    {
+        HotKey toggle;
+        True(HotKeyRules.TryParse("Ctrl+Alt+H", out toggle));
+        Equal(HotKeyRules.Control | HotKeyRules.Alt, toggle.Modifiers);
+        Equal((int)'H', toggle.Key);
+        Equal("Ctrl+Alt+H", HotKeyRules.Format(toggle));
+
+        HotKey talk;
+        True(HotKeyRules.TryParse(" alt + ctrl + space ", out talk));
+        Equal("Ctrl+Alt+Space", HotKeyRules.Format(talk));
+        Equal("Ctrl+Alt+空格", HotKeyRules.Display(talk));
+
+        HotKey other;
+        True(HotKeyRules.TryParse("Win+Shift+F12", out other));
+        Equal("Shift+Win+F12", HotKeyRules.Format(other));
+        True(HotKeyRules.TryParse("Ctrl+Shift+7", out other));
+        Equal(0x37, other.Key);
+        foreach (string bad in new[] { null, "", "H", "Shift+H", "Ctrl+Alt", "Ctrl+Alt+H+J", "Ctrl+Alt+Esc", "Ctrl+Alt+F13", "Ctrl+Alt+F01", "Ctrl+Hyper+H" })
+            False(HotKeyRules.TryParse(bad, out other));
+
+        Equal("和另一个快捷键重复了。", HotKeyRules.Problem(new HotKey(HotKeyRules.Control | HotKeyRules.Alt, 'H'), toggle));
+        True(HotKeyRules.Problem(new HotKey(HotKeyRules.Shift, 'H'), null) != null);
+        True(HotKeyRules.Problem(new HotKey(HotKeyRules.Control, 0x1B), null) != null);
+        True(HotKeyRules.Problem(talk, toggle) == null);
+
+        // 数据文件里的快捷键：不合法的回退默认，合法的统一写法，两个相同时都回到默认，没有这两项时用默认。
+        string root = NewTestDirectory();
+        string path = Path.Combine(root, "data.json");
+        File.WriteAllText(path, "{\"FormatVersion\":1,\"Todos\":[],\"Settings\":{\"ToggleHotKey\":\"Shift+H\",\"TalkHotKey\":\"alt+ctrl+j\"}}", Encoding.UTF8);
+        RoostSettings settings = new TodoRepository(path).Load().Settings;
+        Equal("Ctrl+Alt+H", settings.ToggleHotKey);
+        Equal("Ctrl+Alt+J", settings.TalkHotKey);
+        File.WriteAllText(path, "{\"FormatVersion\":1,\"Todos\":[],\"Settings\":{\"ToggleHotKey\":\"Ctrl+Shift+K\",\"TalkHotKey\":\"Shift+Ctrl+K\"}}", Encoding.UTF8);
+        settings = new TodoRepository(path).Load().Settings;
+        Equal("Ctrl+Alt+H", settings.ToggleHotKey);
+        Equal("Ctrl+Alt+Space", settings.TalkHotKey);
+        File.WriteAllText(path, "{\"FormatVersion\":1,\"Todos\":[],\"Settings\":{}}", Encoding.UTF8);
+        settings = new TodoRepository(path).Load().Settings;
+        Equal("Ctrl+Alt+H", settings.ToggleHotKey);
+        Equal("Ctrl+Alt+Space", settings.TalkHotKey);
     }
 
     private static void TestAiContextScope()
